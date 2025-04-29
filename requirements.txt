@@ -1,0 +1,12 @@
+Pillow
+mss
+pytesseract
+requests
+spylls
+keyboard
+pywin32
+opencv-python
+numpy
+fonttools
+pystray
+win10toast
