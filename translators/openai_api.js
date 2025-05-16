@@ -8,15 +8,23 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 
 async function translate(text, sourceLang, targetLang) {
-    const prompt = `Translate everything inside the angle brackets <<>> from ${sourceLang} to ${targetLang} and return only the translated text, without the angle brackets: << ${text} >>`;
+
+    const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+
     const requestBody = {
         model: MODEL,
         temperature: TEMPERATURE, 
         max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }],
+        messages: [{
+            role: "system",
+            content: prompt
+            }, {
+            role: "user",
+            content: text
+        }] 
     };
 
-    const response = await fetch(API_URL, {
+const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -28,9 +36,56 @@ async function translate(text, sourceLang, targetLang) {
     if (!response.ok) {
         throw new Error(`API request failed with status: ${response.status}`);
     }
+
     const data = await response.json();
     const translatedText = data.choices[0].message.content.trim();
     return translatedText;
+}
+
+async function translateImage(input) {
+    try {
+        const { image, sourceLang, targetLang } = JSON.parse(input);
+        const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+        
+        const requestBody = {
+            model: MODEL,
+            temperature: TEMPERATURE,
+            max_tokens: MAX_TOKENS,
+            messages: [{
+                role: "system",
+                content: prompt
+            }, {
+                role: "user",
+                content: [{
+                    type: "image_url",
+                    image_url: {
+                        url: `data:image/png;base64,${image}`
+                    }
+                }]
+            }]
+        };
+
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${API_KEY}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            throw new Error(`API request failed with status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const translatedText = data.choices[0].message.content.trim();
+        return translatedText;
+
+    } catch (error) {
+        console.error(`Error translating image: ${error}`);
+        throw error;
+    }
 }
 
 async function getTranslatedText(text, sourceLang, targetLang) {
@@ -44,5 +99,6 @@ async function getTranslatedText(text, sourceLang, targetLang) {
 }
 
 module.exports = {
-    getTranslatedText
+    getTranslatedText,
+    translateImage
 };
