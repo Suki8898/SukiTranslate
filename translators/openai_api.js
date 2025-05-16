@@ -1,5 +1,9 @@
-const API_KEY = 'YOUR_API_KEY_HERE'; // Replace with your OpenAI API key https://platform.openai.com/settings/organization/api-keys
-const MODEL = 'gpt-4o-mini'; // Models and pricing https://platform.openai.com/docs/pricing
+// Replace with your OpenAI API key https://platform.openai.com/settings/organization/api-keys; // Replace with your OpenAI API key https://platform.openai.com/settings/organization/api-keys
+const API_KEY = 'YOUR_API_KEY_HERE';
+
+// Models and pricing https://platform.openai.com/docs/pricing; // Models and pricing https://platform.openai.com/docs/pricing
+const MODEL = 'gpt-4o-mini';
+
 const API_URL = 'https://api.openai.com/v1/chat/completions';
 const MAX_TOKENS = 2000;
 const TEMPERATURE = 0.5; // Controls the randomness of the output, lower values are more deterministic and higher values are more random (0 - 2)

@@ -26,7 +26,7 @@ import webbrowser
 from win10toast import ToastNotifier
 
 APP_NAME = "Suki Translate"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -174,43 +174,7 @@ def is_already_running():
         return False
     except socket.error:
         return True
-
-def update_translator_files():
-    try:
-        repo_url = "https://raw.githubusercontent.com/Suki8898/SukiTranslate/main/translators/"
-        response = requests.get("https://api.github.com/repos/Suki8898/SukiTranslate/contents/translators")
-        response.raise_for_status()
-        files = response.json()
         
-        for file_info in files:
-            if not file_info["name"].endswith(".js"):
-                continue
-            filename = file_info["name"]
-            raw_url = file_info["download_url"]
-            local_path = os.path.join(TRANSLATORS_DIR, filename)
-
-            old_key = ""
-            if os.path.exists(local_path):
-                with open(local_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if "const API_KEY" in line:
-                            old_key = line.strip()
-                            break
-            response = requests.get(raw_url)
-            response.raise_for_status()
-            new_code = response.text
-            if old_key:
-                if "const API_KEY" in new_code:
-                    new_code = re.sub(r"const API_KEY\s*=\s*['\"].*?['\"]\s*;", old_key, new_code)
-                else:
-                    new_code = old_key + "\n" + new_code
-            with open(local_path, "w", encoding="utf-8") as f:
-                f.write(new_code)
-        return True
-    except Exception as e:
-        messagebox.showerror("Update Failed", f"Error downloading translators from GitHub:\n{e}")
-        return False
-
 def download_traineddata(lang_code):
     tessdata_url = f"https://github.com/tesseract-ocr/tessdata/raw/main/{lang_code}.traineddata"
     local_path = os.path.join(TESSDATA_DIR, f"{lang_code}.traineddata")
@@ -479,7 +443,8 @@ class SettingsManager:
             "always_on_top": False,
             "run_at_startup": False,
             "sample_text": "Suki loves boba, naps, and head scratches UwU",
-            "minimize_to_tray": False
+            "minimize_to_tray": False,
+            "ocr_mode": "AI"
         }
         self.settings = self.default_settings.copy()
         
@@ -618,6 +583,17 @@ class SettingsWindow:
         self.run_at_startup_var.trace("w", lambda *args: self.update_general_settings())
         self.minimize_to_tray_var.trace("w", lambda *args: self.update_general_settings())
 
+
+        ocr_frame = ttk.Frame(self.general_frame)
+        ocr_frame.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
+        
+        self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
+        ttk.Radiobutton(ocr_frame, text="Tesseract", variable=self.ocr_mode_var, value="Tesseract").grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Radiobutton(ocr_frame, text="AI Recognition", variable=self.ocr_mode_var, value="AI").grid(row=0, column=2, sticky="w", padx=5)
+        
+        self.ocr_mode_var.trace("w", lambda *args: self.update_general_settings())
+
     def start_hotkey_recording(self):
         if not self.recording:
             self.recording = True
@@ -704,6 +680,7 @@ class SettingsWindow:
         new_settings["always_on_top"] = self.always_on_top_var.get()
         new_settings["run_at_startup"] = self.run_at_startup_var.get()
         new_settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
+        new_settings["ocr_mode"] = self.ocr_mode_var.get()
         
         self.app.settings_manager.save_settings(new_settings)
         self.app.settings = new_settings
@@ -811,15 +788,18 @@ class SettingsWindow:
         list_frame = ttk.Frame(self.translator_frame)
         list_frame.pack(pady=10, padx=10, fill="both", expand=True)
         
-        ttk.Label(list_frame, text="Translators:").grid(row=0, column=0, columnspan=3, sticky="w", pady=5)
-        
         update_btn = ttk.Button(list_frame, text="🔄 Update translators from GitHub", command=self.update_translators_from_github)
-        update_btn.grid(row=1, column=0, columnspan=3, sticky="w", pady=5)
+        update_btn.grid(row=0, column=0, columnspan=4, sticky="w", pady=5)
 
-        list_frame.columnconfigure(1, weight=1)
+        ttk.Label(list_frame, text="Translators").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(list_frame, text="API Keys").grid(row=1, column=1, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Models").grid(row=1, column=2, sticky="w", pady=5)
+
+        list_frame.columnconfigure(2, weight=1)
         
         self.translator_vars = {}
         self.api_key_entries = {}
+        self.model_entries = {}
         
         translators = self.translator_manager.get_translator_list()
         active_trans = self.translator_manager.active_translator
@@ -834,16 +814,22 @@ class SettingsWindow:
             )
             chk.grid(row=row, column=0, sticky="w", padx=(0, 10))
             
-            ttk.Label(list_frame, text="API Key:").grid(row=row, column=1, sticky="e", padx=(0, 5))
-            
             api_key_var = tk.StringVar()
-            entry = ttk.Entry(
+            api_key_entry = ttk.Entry(
                 list_frame,
                 textvariable=api_key_var,
                 show="•",
+                width=20
+            )
+            api_key_entry.grid(row=row, column=1, sticky="ew", padx=(0, 10))
+            
+            model_var = tk.StringVar()
+            model_entry = ttk.Entry(
+                list_frame,
+                textvariable=model_var,
                 width=30
             )
-            entry.grid(row=row, column=2, sticky="ew", padx=(0, 10))
+            model_entry.grid(row=row, column=2, sticky="ew", padx=(0, 10))
             
             key_path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
             if os.path.exists(key_path):
@@ -852,15 +838,31 @@ class SettingsWindow:
                         if "const API_KEY" in line:
                             match = re.search(r"['\"](.*?)['\"]", line)
                             if match:
-                                api_key_var.set(match.group(1))
-                                break
+                                api_key = match.group(1)
+                                api_key_var.set(api_key)
+                                if api_key == "YOUR_API_KEY_HERE":
+                                    api_key_entry.config(show="")
+                        elif "const MODEL" in line:
+                            match = re.search(r"['\"](.*?)['\"]", line)
+                            if match:
+                                model_var.set(match.group(1))
             
-            entry.bind("<FocusOut>", lambda e, name=t_name, var=api_key_var: self.save_api_key(name, var.get()))
+            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var.get(), model_var.get()))
+            model_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var.get(), model_var.get()))
+            
+            def update_api_key_visibility(*args):
+                if api_key_var.get() == "YOUR_API_KEY_HERE":
+                    api_key_entry.config(show="")
+                else:
+                    api_key_entry.config(show="•")
+            
+            api_key_var.trace("w", update_api_key_visibility)
             
             self.translator_vars[t_name] = var
             self.api_key_entries[t_name] = api_key_var
-    
-    def save_api_key(self, translator_name, new_key):
+            self.model_entries[t_name] = model_var
+
+    def save_api_key_and_model(self, translator_name, new_key, new_model):
         path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
         if not os.path.exists(path):
             return
@@ -868,20 +870,77 @@ class SettingsWindow:
         with open(path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
-        found = False
+        key_found = False
+        model_found = False
         for i, line in enumerate(lines):
             if "const API_KEY" in line:
                 lines[i] = f"const API_KEY = '{new_key}';\n"
-                found = True
-                break
-        if not found:
+                key_found = True
+            elif "const MODEL" in line:
+                lines[i] = f"const MODEL = '{new_model}';\n"
+                model_found = True
+
+        if not key_found:
             lines.insert(0, f"const API_KEY = '{new_key}';\n")
+        if not model_found:
+            lines.insert(1 if key_found else 0, f"const MODEL = '{new_model}';\n")
 
         with open(path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
 
+    def update_translator_files(self):
+        try:
+            repo_url = "https://raw.githubusercontent.com/Suki8898/SukiTranslate/main/translators/"
+            response = requests.get("https://api.github.com/repos/Suki8898/SukiTranslate/contents/translators")
+            response.raise_for_status()
+            files = response.json()
+            
+            for file_info in files:
+                if not file_info["name"].endswith(".js"):
+                    continue
+                filename = file_info["name"]
+                raw_url = file_info["download_url"]
+                local_path = os.path.join(TRANSLATORS_DIR, filename)
 
-
+                # Read existing API_KEY and MODEL from local file
+                old_key = None
+                old_model = None
+                if os.path.exists(local_path):
+                    with open(local_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()  # Remove trailing newlines and whitespace
+                            if line.startswith("const API_KEY"):
+                                old_key = line.rstrip(';')  # Remove trailing semicolon
+                            elif line.startswith("const MODEL"):
+                                old_model = line.rstrip(';')  # Remove trailing semicolon
+                
+                # Download new file content
+                response = requests.get(raw_url)
+                response.raise_for_status()
+                new_code = response.text.replace('\r\n', '\n')  # Normalize line endings to \n
+                
+                # Preserve API_KEY
+                if old_key:
+                    if "const API_KEY" in new_code:
+                        new_code = re.sub(r"const API_KEY\s*=\s*['\"].*?['\"]\s*;", f"{old_key};", new_code)
+                    else:
+                        new_code = f"{old_key};\n" + new_code
+                
+                # Preserve MODEL
+                if old_model:
+                    if "const MODEL" in new_code:
+                        new_code = re.sub(r"const MODEL\s*=\s*['\"].*?['\"]\s*;", f"{old_model};", new_code)
+                    else:
+                        new_code = f"{old_model};\n" + new_code
+                
+                # Write the updated content, ensuring single newlines
+                with open(local_path, "w", encoding="utf-8", newline='\n') as f:
+                    f.write(new_code)
+            
+            return True
+        except Exception as e:
+            messagebox.showerror("Update Failed", f"Error downloading translators from GitHub:\n{e}")
+            return False
 
     def setup_display_tab(self):
         self.dark_mode_var = tk.BooleanVar(value=self.app.settings.get("dark_mode", False))
@@ -1008,7 +1067,7 @@ class SettingsWindow:
         self.app.settings_manager.save_settings(self.app.settings)
 
     def update_translators_from_github(self):
-        if update_translator_files():
+        if self.update_translator_files():
             messagebox.showinfo("Done", "Translators updated successfully!")
             self.translator_manager.load_translators()
             self.translator_frame.destroy()
@@ -1287,6 +1346,7 @@ class SukiTranslateApp:
         print("Console log initialized")
         print(f"Appdata dir: {APPDATA_DIR}")
         print(f"Active translator: {self.translator_manager.active_translator}")
+        print(f"OCR mode: {self.settings.get('ocr_mode', 'tesseract')}")
 
     def update_language_setting(self, event=None):
         source_display = self.source_lang_combo.get()
@@ -1540,44 +1600,53 @@ class SukiTranslateApp:
 
             captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
 
-            extracted_text = self.extract_text_from_image(captured_image)
-            self.last_extracted_text = extracted_text
+            ocr_mode = self.settings.get("ocr_mode", "tesseract")
+            if ocr_mode == "Tesseract":
+                extracted_text = self.extract_text_from_image(captured_image)
+                self.last_extracted_text = extracted_text
 
-            if not extracted_text.strip():
-                toaster = ToastNotifier()
-                toaster.show_toast("Suki Translate", "No text detected in selected area.", duration=3, threaded=True)
-                return
+                if not extracted_text.strip():
+                    messagebox.showinfo("Info", "No text detected in selected area.")
+                    return
 
-            selected_lang = self.source_lang_combo.get()
-            if selected_lang in LANGUAGE_MAPPING:
-                self.spell_checker.load_dictionary_for_language(selected_lang)
+                selected_lang = self.source_lang_combo.get()
+                if selected_lang in LANGUAGE_MAPPING:
+                    self.spell_checker.load_dictionary_for_language(selected_lang)
 
-            if self.spell_checker.current_dict:
-                is_correct, misspelled = self.spell_checker.check_spelling(extracted_text)
-                if not is_correct:
-                    print(f"Found {len(misspelled)} spelling errors (auto-corrected)")
+                if self.spell_checker.current_dict:
+                    is_correct, misspelled = self.spell_checker.check_spelling(extracted_text)
+                    if not is_correct:
+                        print(f"Found {len(misspelled)} spelling errors (auto-corrected)")
 
-            active_translator = self.translator_manager.get_active_translator()
-            if not active_translator:
-                messagebox.showerror("Error", "No translator is enabled. Please enable one in Settings.")
-                return
+                active_translator = self.translator_manager.get_active_translator()
+                if not active_translator:
+                    messagebox.showerror("Error", "No translator is enabled. Please enable one in Settings.")
+                    return
 
-            self.translated_input_text = extracted_text
-            print(f"Extracted OCR text: {extracted_text}")
-            
-            translated_text = self.translate_with_api(
-                extracted_text,
-                self.source_lang_combo.get(),
-                self.target_lang_combo.get(),
-                active_translator['path']
-            )
+                self.translated_input_text = extracted_text
+                print(f"--- Extracted OCR Text ---\n{extracted_text}\n-------------------------")
+
+                translated_text = self.translate_with_api(
+                    extracted_text,
+                    self.source_lang_combo.get(),
+                    self.target_lang_combo.get(),
+                    active_translator['path']
+                )
+            else:
+                translated_text = self.extract_text_with_ai(captured_image)
+                self.last_extracted_text = translated_text
+
+                if not translated_text.strip():
+                    messagebox.showinfo("Info", "No text detected or translated in selected area.")
+                    return
+
+                self.translated_input_text = translated_text
+                print(f"--- AI Translated Text ---\n{translated_text}\n-------------------------")
 
             self.display_translation_overlay(translated_text)
-            print(f"Translated text ({self.source_lang_combo.get()} -> {self.target_lang_combo.get()}): {translated_text}") 
 
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {e}")
-
 
     def extract_text_from_image(self, image):
         lang_name = self.source_lang_combo.get()
@@ -1605,7 +1674,110 @@ class SukiTranslateApp:
         except Exception as e:
             print(f"OCR Error: {e}")
             return ""
+        
+    def extract_text_with_ai(self, image):
+        try:
+            active_translator = self.translator_manager.get_active_translator()
+            if not active_translator:
+                raise Exception("No translator is enabled. Please enable one in Settings.")
 
+            temp_image_path = os.path.join(PROJECT_DIR, "temp_image.png")
+            image.save(temp_image_path, format="PNG")
+
+            import base64
+            with open(temp_image_path, "rb") as img_file:
+                image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+            source_lang = self.source_lang_combo.get()
+            target_lang = self.target_lang_combo.get()
+            source_lang_code = LANGUAGE_MAPPING.get(source_lang, {}).get("code", "en")
+            target_lang_code = LANGUAGE_MAPPING.get(target_lang, {}).get("code", "vi")
+
+            translator_path = active_translator['path']
+            temp_input = os.path.join(PROJECT_DIR, "temp_input.json")
+            with open(temp_input, "w", encoding="utf-8") as f:
+                json.dump({
+                    "image": image_base64,
+                    "sourceLang": source_lang_code,
+                    "targetLang": target_lang_code
+                }, f)
+
+            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
+
+            node_command = (
+                f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
+                f'translator.translateImage('
+                f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\')'
+                f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
+            )
+
+            result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise Exception(f"Node.js error: {result.stderr}")
+
+            with open(temp_output, "r", encoding="utf-8") as f:
+                translated_text = f.read()
+
+            os.remove(temp_image_path)
+            os.remove(temp_input)
+            os.remove(temp_output)
+
+            return translated_text.strip()
+
+        except Exception as e:
+            print(f"AI Translation Error: {e}")
+            return ""
+            
+        try:
+            temp_image_path = os.path.join(PROJECT_DIR, "temp_image.png")
+            image.save(temp_image_path, format="PNG")
+
+            import base64
+            with open(temp_image_path, "rb") as img_file:
+                image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+
+            source_lang = self.source_lang_combo.get()
+            target_lang = self.target_lang_combo.get()
+            source_lang_code = LANGUAGE_MAPPING.get(source_lang, {}).get("code", "en")
+            target_lang_code = LANGUAGE_MAPPING.get(target_lang, {}).get("code", "vi")
+
+            translator_path = os.path.join(TRANSLATORS_DIR, "openai_api.js")
+            temp_input = os.path.join(PROJECT_DIR, "temp_input.json")
+            with open(temp_input, "w", encoding="utf-8") as f:
+                json.dump({
+                    "image": image_base64,
+                    "sourceLang": source_lang_code,
+                    "targetLang": target_lang_code
+                }, f)
+
+            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
+
+            node_command = (
+                f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
+                f'translator.translateImage('
+                f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\')'
+                f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
+            )
+
+            result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise Exception(f"Node.js error: {result.stderr}")
+
+            with open(temp_output, "r", encoding="utf-8") as f:
+                translated_text = f.read()
+
+            os.remove(temp_image_path)
+            os.remove(temp_input)
+            os.remove(temp_output)
+
+            return translated_text.strip()
+
+        except Exception as e:
+            print(f"AI Translation Error: {e}")
+            return ""
+        
     def translate_with_api(self, text, source_lang, target_lang, translator_path):
         try:
             temp_input = os.path.join(PROJECT_DIR, "temp_input.txt")
@@ -1787,10 +1959,25 @@ class SukiTranslateApp:
             overlay.focus_force()
 
             context_menu = tk.Menu(overlay, tearoff=0)
-            context_menu.add_command(label="Copy Original Text", command=lambda: copy_original_text(self.last_extracted_text))
-            context_menu.add_command(label="Copy Translated Text", command=lambda: copy_translated_text(text))
-            context_menu.add_command(label="Copy Image", command=lambda: copy_image(self.captured_image))
-            context_menu.add_command(label="Edit", command=lambda: self.open_edit_window())
+            is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
+            context_menu.add_command(
+                label="Copy Original Text",
+                command=lambda: copy_original_text(self.last_extracted_text),
+                state="disabled" if is_ai_mode else "normal"
+            )
+            context_menu.add_command(
+                label="Copy Translated Text",
+                command=lambda: copy_translated_text(text)
+            )
+            context_menu.add_command(
+                label="Copy Image",
+                command=lambda: copy_image(self.captured_image)
+            )
+            context_menu.add_command(
+                label="Edit",
+                command=lambda: self.open_edit_window(),
+                state="disabled" if is_ai_mode else "normal"
+            )
 
             def show_context_menu(event): context_menu.post(event.x_root, event.y_root)
             overlay.bind("<Button-3>", show_context_menu)
