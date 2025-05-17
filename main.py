@@ -1728,55 +1728,6 @@ class SukiTranslateApp:
         except Exception as e:
             print(f"AI Translation Error: {e}")
             return ""
-            
-        try:
-            temp_image_path = os.path.join(PROJECT_DIR, "temp_image.png")
-            image.save(temp_image_path, format="PNG")
-
-            import base64
-            with open(temp_image_path, "rb") as img_file:
-                image_base64 = base64.b64encode(img_file.read()).decode('utf-8')
-
-            source_lang = self.source_lang_combo.get()
-            target_lang = self.target_lang_combo.get()
-            source_lang_code = LANGUAGE_MAPPING.get(source_lang, {}).get("code", "en")
-            target_lang_code = LANGUAGE_MAPPING.get(target_lang, {}).get("code", "vi")
-
-            translator_path = os.path.join(TRANSLATORS_DIR, "openai_api.js")
-            temp_input = os.path.join(PROJECT_DIR, "temp_input.json")
-            with open(temp_input, "w", encoding="utf-8") as f:
-                json.dump({
-                    "image": image_base64,
-                    "sourceLang": source_lang_code,
-                    "targetLang": target_lang_code
-                }, f)
-
-            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
-
-            node_command = (
-                f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
-                f'translator.translateImage('
-                f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\')'
-                f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
-            )
-
-            result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
-
-            if result.returncode != 0:
-                raise Exception(f"Node.js error: {result.stderr}")
-
-            with open(temp_output, "r", encoding="utf-8") as f:
-                translated_text = f.read()
-
-            os.remove(temp_image_path)
-            os.remove(temp_input)
-            os.remove(temp_output)
-
-            return translated_text.strip()
-
-        except Exception as e:
-            print(f"AI Translation Error: {e}")
-            return ""
         
     def translate_with_api(self, text, source_lang, target_lang, translator_path):
         try:
