@@ -15,13 +15,16 @@ async function translate(text, sourceLang, targetLang) {
     const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
 
     const requestBody = {
-        contents: [{
+        system_instruction: {
             parts: [{
                 text: prompt
-            }, {
+            }]
+        },
+        contents: {
+            parts: [{
                 text: text
             }]
-        }],
+        },
         generationConfig: {
             temperature: TEMPERATURE,
             maxOutputTokens: MAX_TOKENS
@@ -72,16 +75,20 @@ async function translateImage(input) {
         const prompt = `Extract the text from the provided image in ${sourceLang} language and translate it to ${targetLang}. Return only the translated text.`;
 
         const requestBody = {
-            contents: [{
+            system_instruction: {
                 parts: [{
                     text: prompt
-                }, {
+                }]
+            },
+            contents: {
+                parts: [{
                     inlineData: {
                         mimeType: "image/png",
                         data: image
                     }
                 }]
-            }],
+            },
+
             generationConfig: {
                 temperature: TEMPERATURE,
                 maxOutputTokens: MAX_TOKENS
