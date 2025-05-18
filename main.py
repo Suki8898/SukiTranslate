@@ -24,10 +24,9 @@ from fontTools.ttLib import TTFont
 import pystray
 import webbrowser
 from win10toast import ToastNotifier
-import uuid
 
 APP_NAME = "Suki Translate"
-VERSION = "1.1.1"
+VERSION = "1.1.0"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -1226,9 +1225,6 @@ class SukiTranslateApp:
         self.last_extracted_text = None 
         self.captured_image = None
         self.current_overlay = None
-
-        self.current_task = None
-        self.cancel_event = threading.Event()
         
     def create_system_tray_icon(self):
         try:
@@ -1535,12 +1531,8 @@ class SukiTranslateApp:
                 self.apply_theme()
 
     def start_capture(self):
-        if self.current_task and self.current_task.is_alive():
-            print("Canceling previous task...")
-            self.cancel_event.set()
-
-        self.cancel_event.clear()
         self.is_selecting = True
+        self.x1 = self.y1 = self.x2 = self.y2 = None
         self.root.after(100, self._create_overlay)
         
     def _create_overlay(self):
@@ -1555,7 +1547,6 @@ class SukiTranslateApp:
 
         with mss.mss() as sct:
             monitor = sct.monitors[1]
-            sct.compression_level = 0
             self.full_screen_img = Image.frombytes("RGB", (monitor["width"], monitor["height"]), sct.grab(monitor).bgra, "raw", "BGRX")
             self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
 
@@ -1587,27 +1578,26 @@ class SukiTranslateApp:
             self.x2 = event.x
             self.y2 = event.y
 
-            self.x1, self.x2 = min(self.x1, self.x2), max(self.x1, self.x2)
-            self.y1, self.y2 = min(self.y1, self.y2), max(self.y1, self.y2)
-
-            self.captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
-
-            self.overlay.destroy()
-
-            if (self.x2 - self.x1) < 5 or (self.y2 - self.y1) < 5:
-                toaster = ToastNotifier()
-                toaster.show_toast("Suki Translate", "Please select a larger area.", duration=3, threaded=True)
+        if self.x1 is None or self.y1 is None or self.x2 is None or self.y2 is None:
+                self.overlay.destroy()
                 return
 
-            self.current_task = threading.Thread(target=self.perform_translation)
-            self.current_task.start()
+        self.x1, self.x2 = min(self.x1, self.x2), max(self.x1, self.x2)
+        self.y1, self.y2 = min(self.y1, self.y2), max(self.y1, self.y2)
+
+        self.captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
+
+        self.overlay.destroy()
+
+        if (self.x2 - self.x1) < 5 or (self.y2 - self.y1) < 5:
+            toaster = ToastNotifier()
+            toaster.show_toast("Suki Translate", "Please select a larger area.", duration=3, threaded=True)
+            return
+
+        threading.Thread(target=self.perform_translation).start()
 
     def perform_translation(self):
         try:
-            if self.cancel_event.is_set():
-                print("Task canceled before starting.")
-                return
-
             if self.full_screen_img is None:
                 messagebox.showerror("Error", "Please capture an area first.")
                 return
@@ -1616,10 +1606,6 @@ class SukiTranslateApp:
 
             ocr_mode = self.settings.get("ocr_mode", "tesseract")
             if ocr_mode == "Tesseract":
-                if self.cancel_event.is_set():
-                    print("Task canceled during OCR.")
-                    return
-
                 extracted_text = self.extract_text_from_image(captured_image)
                 self.last_extracted_text = extracted_text
 
@@ -1636,10 +1622,6 @@ class SukiTranslateApp:
                     if not is_correct:
                         print(f"Found {len(misspelled)} spelling errors (auto-corrected)")
 
-                if self.cancel_event.is_set():
-                    print("Task canceled before API call.")
-                    return
-
                 active_translator = self.translator_manager.get_active_translator()
                 if not active_translator:
                     messagebox.showerror("Error", "No translator is enabled. Please enable one in Settings.")
@@ -1648,21 +1630,14 @@ class SukiTranslateApp:
                 self.translated_input_text = extracted_text
                 print(f"--- Extracted OCR Text ---\n{extracted_text}\n-------------------------")
 
-                task_id = str(uuid.uuid4())
                 translated_text = self.translate_with_api(
                     extracted_text,
                     self.source_lang_combo.get(),
                     self.target_lang_combo.get(),
-                    active_translator['path'],
-                    task_id
+                    active_translator['path']
                 )
             else:
-                if self.cancel_event.is_set():
-                    print("Task canceled during AI processing.")
-                    return
-
-                task_id = str(uuid.uuid4())
-                translated_text = self.extract_text_with_ai(captured_image, task_id)
+                translated_text = self.extract_text_with_ai(captured_image)
                 self.last_extracted_text = translated_text
 
                 if not translated_text.strip():
@@ -1672,17 +1647,10 @@ class SukiTranslateApp:
                 self.translated_input_text = translated_text
                 print(f"--- AI Translated Text ---\n{translated_text}\n-------------------------")
 
-            if self.cancel_event.is_set():
-                print("Task canceled before displaying translation.")
-                return
-
             self.display_translation_overlay(translated_text)
 
         except Exception as e:
-            if not self.cancel_event.is_set():
-                messagebox.showerror("Error", f"An error occurred: {e}")
-        finally:
-            self.current_task = None
+            messagebox.showerror("Error", f"An error occurred: {e}")
 
     def extract_text_from_image(self, image):
         lang_name = self.source_lang_combo.get()
@@ -1711,20 +1679,13 @@ class SukiTranslateApp:
             print(f"OCR Error: {e}")
             return ""
         
-    def extract_text_with_ai(self, image, task_id):
+    def extract_text_with_ai(self, image):
         try:
-            if self.cancel_event.is_set():
-                print("AI translation canceled.")
-                return ""
-
             active_translator = self.translator_manager.get_active_translator()
             if not active_translator:
                 raise Exception("No translator is enabled. Please enable one in Settings.")
 
-            temp_image_path = os.path.join(PROJECT_DIR, f"temp_image_{task_id}.png")
-            temp_input = os.path.join(PROJECT_DIR, f"temp_input_{task_id}.json")
-            temp_output = os.path.join(PROJECT_DIR, f"temp_output_{task_id}.txt")
-
+            temp_image_path = os.path.join(PROJECT_DIR, "temp_image.png")
             image.save(temp_image_path, format="PNG")
 
             import base64
@@ -1736,6 +1697,8 @@ class SukiTranslateApp:
             source_lang_code = LANGUAGE_MAPPING.get(source_lang, {}).get("code", "en")
             target_lang_code = LANGUAGE_MAPPING.get(target_lang, {}).get("code", "vi")
 
+            translator_path = active_translator['path']
+            temp_input = os.path.join(PROJECT_DIR, "temp_input.json")
             with open(temp_input, "w", encoding="utf-8") as f:
                 json.dump({
                     "image": image_base64,
@@ -1743,13 +1706,8 @@ class SukiTranslateApp:
                     "targetLang": target_lang_code
                 }, f)
 
-            if self.cancel_event.is_set():
-                print("AI translation canceled before Node.js execution.")
-                os.remove(temp_image_path)
-                os.remove(temp_input)
-                return ""
+            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
 
-            translator_path = active_translator['path']
             node_command = (
                 f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
                 f'translator.translateImage('
@@ -1758,14 +1716,6 @@ class SukiTranslateApp:
             )
 
             result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
-
-            if self.cancel_event.is_set():
-                print("AI translation canceled after Node.js execution.")
-                os.remove(temp_image_path)
-                os.remove(temp_input)
-                if os.path.exists(temp_output):
-                    os.remove(temp_output)
-                return ""
 
             if result.returncode != 0:
                 raise Exception(f"Node.js error: {result.stderr}")
@@ -1782,24 +1732,15 @@ class SukiTranslateApp:
         except Exception as e:
             print(f"AI Translation Error: {e}")
             return ""
-       
-    def translate_with_api(self, text, source_lang, target_lang, translator_path, task_id):
+        
+    def translate_with_api(self, text, source_lang, target_lang, translator_path):
         try:
-            if self.cancel_event.is_set():
-                print("Translation canceled.")
-                return None
-
-            temp_input = os.path.join(PROJECT_DIR, f"temp_input_{task_id}.txt")
-            temp_output = os.path.join(PROJECT_DIR, f"temp_output_{task_id}.txt")
-
+            temp_input = os.path.join(PROJECT_DIR, "temp_input.txt")
             with open(temp_input, "w", encoding="utf-8") as f:
                 f.write(text)
-
-            if self.cancel_event.is_set():
-                print("Translation canceled before Node.js execution.")
-                os.remove(temp_input)
-                return None
-
+            
+            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
+            
             node_command = (
                 f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
                 f'translator.getTranslatedText('
@@ -1807,33 +1748,25 @@ class SukiTranslateApp:
                 f'\'{source_lang}\', \'{target_lang}\''
                 f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
             )
-
+            
             result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
-
-            if self.cancel_event.is_set():
-                print("Translation canceled after Node.js execution.")
-                if os.path.exists(temp_input):
-                    os.remove(temp_input)
-                if os.path.exists(temp_output):
-                    os.remove(temp_output)
-                return None
-
+            
             if result.returncode != 0:
                 raise Exception(f"Node.js error: {result.stderr}")
-
+            
             with open(temp_output, "r", encoding="utf-8") as f:
                 translated_text = f.read()
-
-            if os.path.exists(temp_input):
-                os.remove(temp_input)
-            if os.path.exists(temp_output):
-                os.remove(temp_output)
-
+            
+            os.remove(temp_input)
+            os.remove(temp_output)
+            
             return translated_text
-
+            
         except Exception as e:
             print(f"Translation API Error: {e}")
             return None
+
+
 
     def display_translation_overlay(self, text):
         try:
