@@ -26,7 +26,7 @@ import webbrowser
 from win10toast import ToastNotifier
 
 APP_NAME = "Suki Translate"
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
