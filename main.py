@@ -23,10 +23,11 @@ import numpy as np
 from fontTools.ttLib import TTFont
 import pystray
 import webbrowser
-from win10toast import ToastNotifier
+from plyer import notification
+import shutil
 
 APP_NAME = "Suki Translate"
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -50,13 +51,22 @@ if not os.path.exists(TESSERACT_DIR):
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_DIR
 
 NODE_MODULES_DIR = os.path.join(APPDATA_DIR, 'node_modules')            
-NODE_MODULES_SRC = os.path.join(PROJECT_DIR, 'node_modules')
 
-ICON_DIR = os.path.join(PROJECT_DIR, 'icons', 'icon.ico')
+if getattr(sys, 'frozen', False):
+    _base_bundle_dir = os.path.dirname(sys.executable)
+    NODE_DIR = os.path.join(_base_bundle_dir, 'Node', 'node.exe')
+    NPM_DIR = os.path.join(_base_bundle_dir, 'Node', 'npm.cmd')
+else:
+    NODE_DIR = os.path.join(PROJECT_DIR, 'Node', 'node.exe')
+    NPM_DIR = os.path.join(PROJECT_DIR, 'Node', 'npm.cmd')
+
+if getattr(sys, 'frozen', False):
+    _base_bundle_dir = sys._MEIPASS
+    ICON_DIR = os.path.join(_base_bundle_dir, 'icons', 'icon.ico')
+else:
+    ICON_DIR = os.path.join(PROJECT_DIR, 'icons', 'icon.ico')
 
 LOCK_FILE = os.path.join(APPDATA_DIR, 'app.lock')
-
-
 
 
 LANGUAGE_MAPPING = {
@@ -537,7 +547,7 @@ class SettingsWindow:
 
     def setup_general_tab(self):
         hotkey_row = ttk.Frame(self.general_frame)
-        hotkey_row.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
+        hotkey_row.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
         
         ttk.Label(hotkey_row, text="Hotkey:").grid(row=0, column=0, sticky="w")
 
@@ -783,13 +793,23 @@ class SettingsWindow:
             else:
                 messagebox.showerror("Error", f"Failed to load dictionary for {selected_code}")
                 self.dict_var.set("none")
-    
+
+    def open_translators_folder(self):
+        try:
+            os.startfile(TRANSLATORS_DIR)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open translators folder: {e}")
+
     def setup_translator_tab(self):
         list_frame = ttk.Frame(self.translator_frame)
         list_frame.pack(pady=10, padx=10, fill="both", expand=True)
         
         update_btn = ttk.Button(list_frame, text="🔄 Update translators from GitHub", command=self.update_translators_from_github)
-        update_btn.grid(row=0, column=0, columnspan=4, sticky="w", pady=5)
+        update_btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
+
+
+        open_folder_btn = ttk.Button(list_frame, text="📂 Open folder", command=self.open_translators_folder)
+        open_folder_btn.grid(row=0, column=2, sticky="e", pady=5)
 
         ttk.Label(list_frame, text="Translators").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Label(list_frame, text="API Keys").grid(row=1, column=1, sticky="w", pady=5)
@@ -829,7 +849,7 @@ class SettingsWindow:
                 textvariable=model_var,
                 width=30
             )
-            model_entry.grid(row=row, column=2, sticky="ew", padx=(0, 10))
+            model_entry.grid(row=row, column=2, sticky="ew")
             
             key_path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
             if os.path.exists(key_path):
@@ -902,38 +922,33 @@ class SettingsWindow:
                 raw_url = file_info["download_url"]
                 local_path = os.path.join(TRANSLATORS_DIR, filename)
 
-                # Read existing API_KEY and MODEL from local file
                 old_key = None
                 old_model = None
                 if os.path.exists(local_path):
                     with open(local_path, 'r', encoding='utf-8') as f:
                         for line in f:
-                            line = line.strip()  # Remove trailing newlines and whitespace
+                            line = line.strip()
                             if line.startswith("const API_KEY"):
-                                old_key = line.rstrip(';')  # Remove trailing semicolon
+                                old_key = line.rstrip(';')
                             elif line.startswith("const MODEL"):
-                                old_model = line.rstrip(';')  # Remove trailing semicolon
+                                old_model = line.rstrip(';')
                 
-                # Download new file content
                 response = requests.get(raw_url)
                 response.raise_for_status()
-                new_code = response.text.replace('\r\n', '\n')  # Normalize line endings to \n
+                new_code = response.text.replace('\r\n', '\n')
                 
-                # Preserve API_KEY
                 if old_key:
                     if "const API_KEY" in new_code:
                         new_code = re.sub(r"const API_KEY\s*=\s*['\"].*?['\"]\s*;", f"{old_key};", new_code)
                     else:
                         new_code = f"{old_key};\n" + new_code
                 
-                # Preserve MODEL
                 if old_model:
                     if "const MODEL" in new_code:
                         new_code = re.sub(r"const MODEL\s*=\s*['\"].*?['\"]\s*;", f"{old_model};", new_code)
                     else:
                         new_code = f"{old_model};\n" + new_code
                 
-                # Write the updated content, ensuring single newlines
                 with open(local_path, "w", encoding="utf-8", newline='\n') as f:
                     f.write(new_code)
             
@@ -1546,7 +1561,7 @@ class SukiTranslateApp:
         self.overlay.config(cursor='crosshair')
 
         with mss.mss() as sct:
-            monitor = sct.monitors[1]
+            monitor = sct.monitors[0]
             self.full_screen_img = Image.frombytes("RGB", (monitor["width"], monitor["height"]), sct.grab(monitor).bgra, "raw", "BGRX")
             self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
 
@@ -1557,6 +1572,16 @@ class SukiTranslateApp:
             self.overlay_canvas.bind("<ButtonPress-1>", self.on_mouse_down)
             self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
             self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+            self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
+
+
+    def cancel_capture(self, event=None):
+        if self.is_selecting:
+            self.is_selecting = False
+            if self.overlay and self.overlay.winfo_exists():
+                self.overlay.destroy()
+            
+        self.x1 = self.y1 = self.x2 = self.y2 = None
 
     def on_mouse_down(self, event):
         if self.is_selecting:
@@ -1573,27 +1598,33 @@ class SukiTranslateApp:
             self.rect = self.overlay_canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2, outline="red", width=1)
 
     def on_mouse_up(self, event):
-        if self.is_selecting:
-            self.is_selecting = False
-            self.x2 = event.x
-            self.y2 = event.y
+        if not self.is_selecting:
+            return
 
-        if self.x1 is None or self.y1 is None or self.x2 is None or self.y2 is None:
-                self.overlay.destroy()
-                return
+        self.x2 = event.x
+        self.y2 = event.y
+
+        self.is_selecting = False 
+
+        if self.overlay and self.overlay.winfo_exists():
+            self.overlay.destroy()
+
+        if self.x1 is None or self.y1 is None or self.x2 is None or self.y2 is None or \
+        abs(self.x2 - self.x1) < 5 or abs(self.y2 - self.y1) < 5:
+            notification.notify(
+                title="Suki Translate",
+                message="Screenshot capture area too small.",
+                app_name="Suki Translate",
+                app_icon=ICON_DIR,
+                timeout=3
+            )
+            self.x1 = self.y1 = self.x2 = self.y2 = None
+            return
 
         self.x1, self.x2 = min(self.x1, self.x2), max(self.x1, self.x2)
         self.y1, self.y2 = min(self.y1, self.y2), max(self.y1, self.y2)
 
         self.captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
-
-        self.overlay.destroy()
-
-        if (self.x2 - self.x1) < 5 or (self.y2 - self.y1) < 5:
-            toaster = ToastNotifier()
-            toaster.show_toast("Suki Translate", "Please select a larger area.", duration=3, threaded=True)
-            return
-
         threading.Thread(target=self.perform_translation).start()
 
     def perform_translation(self):
@@ -1709,7 +1740,8 @@ class SukiTranslateApp:
             temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
 
             node_command = (
-                f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
+                f'"{NODE_DIR}" -e "'
+                f'const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
                 f'translator.translateImage('
                 f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\')'
                 f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
@@ -1742,7 +1774,8 @@ class SukiTranslateApp:
             temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
             
             node_command = (
-                f'node -e "const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
+                f'"{NODE_DIR}" -e "'
+                f'const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
                 f'translator.getTranslatedText('
                 f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\'), '
                 f'\'{source_lang}\', \'{target_lang}\''
@@ -2069,18 +2102,43 @@ class SukiTranslateApp:
 
 if __name__ == "__main__":
     if not os.path.exists(NODE_MODULES_DIR):
-        try:
-            if os.path.exists(NODE_MODULES_SRC):
-                print("Copying node_modules to AppData...")
-                import shutil
-                shutil.copytree(NODE_MODULES_SRC, NODE_MODULES_DIR)
-                print("node_modules copied successfully")
-            else:
-                print("Warning: node_modules not found in project directory")
-        except Exception as e:
-            print(f"Error copying node_modules: {e}")
-            messagebox.showerror("Error", f"Could not copy node_modules: {e}")
+        print("Node modules directory not found in AppData. Creating directory...")
+        os.makedirs(NODE_MODULES_DIR, exist_ok=True)
 
+    node_fetch_path = os.path.join(NODE_MODULES_DIR, 'node-fetch')
+    if not os.path.exists(node_fetch_path):
+        print("node-fetch not found. Attempting to install node-fetch...")
+        try:
+            npm_command = (
+                f'"{NPM_DIR}" install node-fetch@2.7.0 '
+                f'--prefix "{APPDATA_DIR}"'
+            )          
+            
+            result = subprocess.run(
+                npm_command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            print("node-fetch installed successfully into AppData.")
+            if result.stdout:
+                print("NPM Output:\n", result.stdout)
+            if result.stderr:
+                print("NPM Errors:\n", result.stderr)
+
+        except subprocess.CalledProcessError as e:
+            msg = f"Error running NPM install: {e}\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
+            print(msg)
+            messagebox.showerror("NPM Installation Error", msg)
+            sys.exit(1)
+        except Exception as e:
+            msg = f"An unexpected error occurred during node-fetch installation: {e}"
+            print(msg)
+            messagebox.showerror("Installation Error", msg)
+            sys.exit(1)
+            
     if is_already_running():
         sys.exit(0)
 
