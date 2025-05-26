@@ -1,16 +1,14 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, font
+from tkinter import ttk, messagebox, font, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 from PIL import Image as PILImage
 import mss
 import pytesseract
 import os
-import threading
 import json
 import subprocess
 import requests
 from spylls.hunspell import Dictionary
-from tkinter import font, colorchooser
 import sys
 import keyboard
 import threading
@@ -27,7 +25,7 @@ from plyer import notification
 import shutil
 
 APP_NAME = "Suki Translate"
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -267,8 +265,6 @@ def check_spelling(text, lang_code='en'):
         clean_word = word.strip('.,!?()[]{}"\'').lower()
         if clean_word and not hobj.lookup(clean_word):
             misspelled.append(word)
-    
-    return len(misspelled) == 0, misspelled
     
     return len(misspelled) == 0, misspelled
 
@@ -633,7 +629,6 @@ class SettingsWindow:
             self.hotkey_display.config(text=self.hotkey_var.get())
 
     def on_key_press(self, event):
-
         if not self.recording:
             return
             
@@ -650,26 +645,18 @@ class SettingsWindow:
         if len(self.current_keys) > 0:
             self.stop_hotkey_recording()
 
-
-    def on_key_press(self, event):
-        if not self.recording:
-            return
-
+    def get_key_name(self, event):
         key = event.keysym
-
         if key in ("Control_L", "Control_R"):
-            self.current_keys.add("Ctrl")
+            return "Ctrl"
         elif key in ("Shift_L", "Shift_R"):
-            self.current_keys.add("Shift")
+            return "Shift"
         elif key in ("Alt_L", "Alt_R"):
-            self.current_keys.add("Alt")
+            return "Alt"
         elif key in ("Super_L", "Super_R"):
-            self.current_keys.add("Win")
+            return "Win"
         else:
-            self.current_keys.add(key.capitalize())
-
-        formatted = "+".join(sorted(self.current_keys, key=lambda x: (len(x), x)))
-        self.hotkey_display.config(text=formatted)
+            return key.capitalize()
 
     def toggle_always_on_top(self):
         new_value = self.always_on_top_var.get()
@@ -739,60 +726,6 @@ class SettingsWindow:
         self.app.apply_theme()
         if hasattr(self.app, 'edit_window') and self.app.edit_window and self.app.edit_window.winfo_exists():
             self.app.update_edit_window_theme()
-
-    def setup_correction_tab(self):
-        self.available_dicts = {
-            "English": "en",
-            "Vietnamese": "vi",
-            "French": "fr",
-            "Spanish": "es",
-            "German": "de",
-            "Russian": "ru"
-        }
-        
-        dict_frame = ttk.LabelFrame(self.correction_frame, text="Spell Check Dictionaries")
-        dict_frame.pack(pady=10, padx=10, fill="both", expand=True)
-        
-        ttk.Label(dict_frame, text="Select dictionary to use:").pack(anchor="w", pady=5)
-        
-        self.dict_var = tk.StringVar()
-        
-        ttk.Radiobutton(
-            dict_frame,
-            text="None (disable spell check)",
-            variable=self.dict_var,
-            value="none",
-            command=self.on_dict_select
-        ).pack(anchor="w")
-        
-        for lang_name, lang_code in self.available_dicts.items():
-            ttk.Radiobutton(
-                dict_frame,
-                text=f"{lang_name} ({lang_code})",
-                variable=self.dict_var,
-                value=lang_code,
-                command=self.on_dict_select
-            ).pack(anchor="w")
-        
-        current_dict = getattr(self.spell_checker, 'current_lang', None)
-        if current_dict:
-            self.dict_var.set(current_dict.split('_')[0])
-        else:
-            self.dict_var.set("none")
-    
-    def on_dict_select(self):
-        selected_code = self.dict_var.get()
-        if selected_code == "none":
-            self.spell_checker.current_dict = None
-            self.spell_checker.current_lang = None
-            print("Spell check disabled")
-        else:
-            full_code = f"{selected_code}_US" if selected_code == "en" else selected_code
-            if self.spell_checker.load_dictionary(full_code):
-                print(f"Loaded dictionary for {selected_code}")
-            else:
-                messagebox.showerror("Error", f"Failed to load dictionary for {selected_code}")
-                self.dict_var.set("none")
 
     def open_translators_folder(self):
         try:
