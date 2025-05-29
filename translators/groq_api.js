@@ -1,10 +1,12 @@
 // Replace with your Groq API key https://console.groq.com/keys
 const API_KEY = 'YOUR_API_KEY_HERE';
 
-// Models and free limits https://console.groq.com/dashboard/limits , prici ng https://groq.com/pricing/
-const MODEL = 'llama3-70b-8192';
+// Models and free limits https://console.groq.com/dashboard/limits , pricing https://groq.com/pricing/
+const MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+const PROMPT = 'Translate from SourceLang to TargetLang and return only the translated text';
 const MAX_TOKENS = 2000;
 const TEMPERATURE = 0.5; // Controls the randomness of the output, lower values are more deterministic and higher values are more random (0 - 2)
 
@@ -13,7 +15,7 @@ const fetch = require('node-fetch');
 
 async function translate(text, sourceLang, targetLang) {
 
-    const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+    const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
 
     const requestBody = {
         model: MODEL,
@@ -49,7 +51,7 @@ const response = await fetch(API_URL, {
 async function translateImage(input) {
     try {
         const { image, sourceLang, targetLang } = JSON.parse(input);
-        const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+        const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
         
         const requestBody = {
             model: MODEL,

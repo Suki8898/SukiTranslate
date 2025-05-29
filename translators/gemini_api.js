@@ -5,14 +5,16 @@ const API_KEY = 'YOUR_API_KEY_HERE';
 const MODEL = 'gemini-2.0-flash';
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
-const MAX_TOKENS = 2000;
-const TEMPERATURE = 0.5; // Controls the randomness of the output, lower values are more deterministic and higher values are more random (0 - 2)
+
+const PROMPT = 'Translate from SourceLang to TargetLang and return only the translated text';
+const MAX_TOKENS = 3000;
+const TEMPERATURE = 0.6;
 
 const fs = require('fs');
 const fetch = require('node-fetch');
 
 async function translate(text, sourceLang, targetLang) {
-    const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+    const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
 
     const requestBody = {
         system_instruction: {
@@ -72,7 +74,7 @@ async function translate(text, sourceLang, targetLang) {
 async function translateImage(input) {
     try {
         const { image, sourceLang, targetLang } = JSON.parse(input);
-        const prompt = `Extract the text from the provided image in ${sourceLang} language and translate it to ${targetLang}. Return only the translated text.`;
+        const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
 
         const requestBody = {
             system_instruction: {

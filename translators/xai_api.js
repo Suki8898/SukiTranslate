@@ -2,9 +2,11 @@
 const API_KEY = 'YOUR_API_KEY_HERE';
 
 // Models and pricing https://console.x.ai/
-const MODEL = 'grok-2-latest';
+const MODEL = 'grok-2-vision-1212';
 
 const API_URL = 'https://api.x.ai/v1/chat/completions';
+
+const PROMPT = 'Translate from SourceLang to TargetLang and return only the translated text';
 const MAX_TOKENS = 2000;
 const TEMPERATURE = 0.5; // Controls the randomness of the output, lower values are more deterministic and higher values are more random (0 - 2)
 
@@ -13,7 +15,7 @@ const fetch = require('node-fetch');
 
 async function translate(text, sourceLang, targetLang) {
 
-    const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+    const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
 
     const requestBody = {
         model: MODEL,
@@ -49,7 +51,7 @@ const response = await fetch(API_URL, {
 async function translateImage(input) {
     try {
         const { image, sourceLang, targetLang } = JSON.parse(input);
-        const prompt = `Translate from ${sourceLang} to ${targetLang} and return only the translated text`;
+        const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
         
         const requestBody = {
             model: MODEL,
