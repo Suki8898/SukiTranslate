@@ -23,9 +23,10 @@ import pystray
 import webbrowser
 from plyer import notification
 import shutil
+import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -66,6 +67,24 @@ else:
 
 LOCK_FILE = os.path.join(APPDATA_DIR, 'app.lock')
 
+
+GLOBAL_LOG_BUFFER = collections.deque(maxlen=2000) 
+ACTIVE_LOG_WIDGET = None 
+
+class GlobalTextRedirector:
+    def write(self, string):
+        GLOBAL_LOG_BUFFER.append(string)
+        if ACTIVE_LOG_WIDGET and ACTIVE_LOG_WIDGET.winfo_exists():
+            try:
+                ACTIVE_LOG_WIDGET.configure(state='normal')
+                ACTIVE_LOG_WIDGET.insert(tk.END, string)
+                ACTIVE_LOG_WIDGET.see(tk.END)
+                ACTIVE_LOG_WIDGET.configure(state='disabled')
+            except tk.TclError: 
+                pass
+
+    def flush(self):
+        pass
 
 LANGUAGE_MAPPING = {
     "Afrikaans": {"code": "af", "tess_code": "afr"},
@@ -450,7 +469,8 @@ class SettingsManager:
             "run_at_startup": False,
             "sample_text": "Suki loves boba, naps, and head scratches UwU",
             "minimize_to_tray": False,
-            "ocr_mode": "AI"
+            "ocr_mode": "AI",
+            "auto_copy_clipboard": False
         }
         self.settings = self.default_settings.copy()
         
@@ -527,6 +547,10 @@ class SettingsWindow:
         self.notebook.add(self.general_frame, text="General")
         self.setup_general_tab()
         
+        self.prompt_var = tk.StringVar(value="")
+        self.temperature_var = tk.DoubleVar(value=0.5)
+        self.max_tokens_var = tk.IntVar(value=2000)
+
         self.translator_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.translator_frame, text="Translators")
         self.setup_translator_tab()
@@ -540,6 +564,10 @@ class SettingsWindow:
         self.setup_about_tab()
 
         self.notebook.pack(expand=True, fill="both")
+
+        active_trans = self.translator_manager.active_translator
+        if active_trans:
+            self.load_and_set_translator_params(active_trans)
 
     def setup_general_tab(self):
         hotkey_row = ttk.Frame(self.general_frame)
@@ -582,16 +610,27 @@ class SettingsWindow:
             variable=self.minimize_to_tray_var,
             command=self.update_general_settings
         )
+
         minimize_to_tray_chk.grid(row=3, column=0, sticky="w", padx=10, pady=5)
+
+        self.auto_copy_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_clipboard", False))
+        auto_copy_clipboard_chk = ttk.Checkbutton(
+            self.general_frame,
+            text="Auto save translated text to clipboard",
+            variable=self.auto_copy_clipboard_var,
+            command=self.update_general_settings
+        )
+        auto_copy_clipboard_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
 
         self.hotkey_var.trace("w", lambda *args: self.update_general_settings())
         self.always_on_top_var.trace("w", lambda *args: self.update_general_settings())
         self.run_at_startup_var.trace("w", lambda *args: self.update_general_settings())
         self.minimize_to_tray_var.trace("w", lambda *args: self.update_general_settings())
+        self.auto_copy_clipboard_var.trace("w", lambda *args: self.update_general_settings())
 
 
         ocr_frame = ttk.Frame(self.general_frame)
-        ocr_frame.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        ocr_frame.grid(row=5, column=0, sticky="w", padx=10, pady=5)
         ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
         
         self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
@@ -678,6 +717,7 @@ class SettingsWindow:
         new_settings["run_at_startup"] = self.run_at_startup_var.get()
         new_settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
         new_settings["ocr_mode"] = self.ocr_mode_var.get()
+        new_settings["auto_copy_clipboard"] = self.auto_copy_clipboard_var.get()
         
         self.app.settings_manager.save_settings(new_settings)
         self.app.settings = new_settings
@@ -733,6 +773,102 @@ class SettingsWindow:
         except Exception as e:
             messagebox.showerror("Error", f"Could not open translators folder: {e}")
 
+    def load_params_from_translator_file(self, translator_name):
+        defaults = {"prompt": "", "temperature": 0.5, "max_tokens": 2000}
+        if not translator_name:
+            return defaults
+
+        path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
+        if not os.path.exists(path):
+            print(f"Translator file not found for {translator_name}, using defaults.")
+            return defaults
+
+        params = defaults.copy()
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            prompt_match = re.search(r"const\s+PROMPT\s*=\s*['\"](.*?)['\"]\s*;", content, re.MULTILINE)
+            if prompt_match:
+                params["prompt"] = prompt_match.group(1)
+
+            temp_match = re.search(r"const\s+TEMPERATURE\s*=\s*([\d.]+)\s*;", content, re.MULTILINE)
+            if temp_match:
+                try:
+                    params["temperature"] = float(temp_match.group(1))
+                except ValueError:
+                    print(f"Warning: Could not parse TEMPERATURE from {translator_name}.js")
+
+
+            max_tokens_match = re.search(r"const\s+MAX_TOKENS\s*=\s*(\d+)\s*;", content, re.MULTILINE)
+            if max_tokens_match:
+                try:
+                    params["max_tokens"] = int(max_tokens_match.group(1))
+                except ValueError:
+                    print(f"Warning: Could not parse MAX_TOKENS from {translator_name}.js")
+        except Exception as e:
+            print(f"Error loading params from {translator_name}.js: {e}")
+            return defaults 
+        return params
+
+    def save_prompt_temp_tokens_to_file(self, translator_name, prompt, temperature, max_tokens):
+        path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
+        if not os.path.exists(path):
+            print(f"Cannot save params: Translator file not found for {translator_name}")
+            return
+
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        updated_lines = []
+        prompt_found, temperature_found, max_tokens_found = False, False, False
+
+        for line in lines:
+            if re.match(r"^\s*const\s+PROMPT\s*=", line):
+                updated_lines.append(f"const PROMPT = '{prompt}';\n")
+                prompt_found = True
+            elif re.match(r"^\s*const\s+TEMPERATURE\s*=", line):
+                updated_lines.append(f"const TEMPERATURE = {temperature};\n")
+                temperature_found = True
+            elif re.match(r"^\s*const\s+MAX_TOKENS\s*=", line):
+                updated_lines.append(f"const MAX_TOKENS = {max_tokens};\n")
+                max_tokens_found = True
+            else:
+                updated_lines.append(line)
+        
+        insert_pos = 0
+        for i, line_content in enumerate(lines):
+            stripped_line = line_content.strip()
+            if not stripped_line.startswith("//") and stripped_line != "":
+                insert_pos = i
+                break
+        else:
+            insert_pos = len(updated_lines)
+
+
+        if not max_tokens_found:
+            updated_lines.insert(insert_pos, f"const MAX_TOKENS = {max_tokens};\n")
+        if not temperature_found:
+            updated_lines.insert(insert_pos, f"const TEMPERATURE = {temperature};\n")
+        if not prompt_found:
+            updated_lines.insert(insert_pos, f"const PROMPT = '{prompt}';\n")
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.writelines(updated_lines)
+
+    def load_and_set_translator_params(self, translator_name):
+        """Loads params for a translator and updates the UI vars."""
+        params = self.load_params_from_translator_file(translator_name)
+        self.prompt_var.set(params.get("prompt", ""))
+        self.temperature_var.set(params.get("temperature", 0.5))
+        self.max_tokens_var.set(params.get("max_tokens", 2000))
+
+    def reset_translator_params_ui(self):
+        """Resets UI vars for params to their defaults."""
+        self.prompt_var.set("")
+        self.temperature_var.set(0.5)
+        self.max_tokens_var.set(2000)
+
     def setup_translator_tab(self):
         list_frame = ttk.Frame(self.translator_frame)
         list_frame.pack(pady=10, padx=10, fill="both", expand=True)
@@ -740,32 +876,47 @@ class SettingsWindow:
         update_btn = ttk.Button(list_frame, text="🔄 Update translators from GitHub", command=self.update_translators_from_github)
         update_btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
 
-
         open_folder_btn = ttk.Button(list_frame, text="📂 Open folder", command=self.open_translators_folder)
         open_folder_btn.grid(row=0, column=2, sticky="e", pady=5)
 
-        ttk.Label(list_frame, text="Translators").grid(row=1, column=0, sticky="w", pady=5)
-        ttk.Label(list_frame, text="API Keys").grid(row=1, column=1, sticky="w", pady=5)
-        ttk.Label(list_frame, text="Models").grid(row=1, column=2, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Prompt:").grid(row=1, column=0, sticky="w", pady=5)
+        prompt_entry = ttk.Entry(list_frame, textvariable=self.prompt_var, width=50)
+        prompt_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10))
+        prompt_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
+        ttk.Label(list_frame, text="Temperature:").grid(row=2, column=0, sticky="w", pady=5)
+        temperature_entry = ttk.Entry(list_frame, textvariable=self.temperature_var, width=10)
+        temperature_entry.grid(row=2, column=1, sticky="w", padx=(0, 5))
+        temperature_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
+
+        ttk.Label(list_frame, text="Max Tokens:").grid(row=3, column=0, sticky="w", pady=5)
+        max_tokens_entry = ttk.Entry(list_frame, textvariable=self.max_tokens_var, width=10)
+        max_tokens_entry.grid(row=3, column=1, sticky="w", padx=(0, 5))
+        max_tokens_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
+
+        ttk.Label(list_frame, text="Translator").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Label(list_frame, text="API Key").grid(row=4, column=1, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Model").grid(row=4, column=2, sticky="w", pady=5)
+
+        list_frame.columnconfigure(1, weight=1)
         list_frame.columnconfigure(2, weight=1)
-        
+
         self.translator_vars = {}
         self.api_key_entries = {}
         self.model_entries = {}
         
         translators = self.translator_manager.get_translator_list()
-        active_trans = self.translator_manager.active_translator
+        active_trans_from_settings = self.app.settings.get("active_translator")
         
-        for row, t_name in enumerate(translators, start=2):
-            var = tk.BooleanVar(value=(t_name == active_trans))
+        for row_idx, t_name in enumerate(translators, start=5):
+            var = tk.BooleanVar(value=(t_name == active_trans_from_settings))
             chk = ttk.Checkbutton(
                 list_frame,
                 text=f"{t_name}.js",
                 variable=var,
                 command=lambda n=t_name, v=var: self.on_translator_check(n, v)
             )
-            chk.grid(row=row, column=0, sticky="w", padx=(0, 10))
+            chk.grid(row=row_idx, column=0, sticky="w", padx=(0, 10))
             
             api_key_var = tk.StringVar()
             api_key_entry = ttk.Entry(
@@ -774,7 +925,7 @@ class SettingsWindow:
                 show="•",
                 width=20
             )
-            api_key_entry.grid(row=row, column=1, sticky="ew", padx=(0, 10))
+            api_key_entry.grid(row=row_idx, column=1, sticky="ew", padx=(0, 10))
             
             model_var = tk.StringVar()
             model_entry = ttk.Entry(
@@ -782,38 +933,69 @@ class SettingsWindow:
                 textvariable=model_var,
                 width=30
             )
-            model_entry.grid(row=row, column=2, sticky="ew")
+            model_entry.grid(row=row_idx, column=2, sticky="ew")
             
             key_path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
             if os.path.exists(key_path):
                 with open(key_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if "const API_KEY" in line:
-                            match = re.search(r"['\"](.*?)['\"]", line)
-                            if match:
-                                api_key = match.group(1)
-                                api_key_var.set(api_key)
-                                if api_key == "YOUR_API_KEY_HERE":
-                                    api_key_entry.config(show="")
-                        elif "const MODEL" in line:
-                            match = re.search(r"['\"](.*?)['\"]", line)
-                            if match:
-                                model_var.set(match.group(1))
+                    file_content = f.read()
+                    api_key_match = re.search(r"const\s+API_KEY\s*=\s*['\"](.*?)['\"]\s*;", file_content)
+                    if api_key_match:
+                        api_key = api_key_match.group(1)
+                        api_key_var.set(api_key)
+                        if api_key == "YOUR_API_KEY_HERE":
+                            api_key_entry.config(show="")
+                    
+                    model_match = re.search(r"const\s+MODEL\s*=\s*['\"](.*?)['\"]\s*;", file_content)
+                    if model_match:
+                        model_var.set(model_match.group(1))
             
-            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var.get(), model_var.get()))
-            model_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var.get(), model_var.get()))
+            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var_ref=model_var: self.save_api_key_and_model(name, key_var.get(), model_var_ref.get()))
+            model_entry.bind("<FocusOut>", lambda e, name=t_name, key_var_ref=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var_ref.get(), model_var.get()))
             
-            def update_api_key_visibility(*args):
-                if api_key_var.get() == "YOUR_API_KEY_HERE":
-                    api_key_entry.config(show="")
-                else:
-                    api_key_entry.config(show="•")
+            def update_api_key_visibility_factory(entry_widget, key_string_var):
+                def update_visibility(*args):
+                    if key_string_var.get() == "YOUR_API_KEY_HERE":
+                        entry_widget.config(show="")
+                    else:
+                        entry_widget.config(show="•")
+                return update_visibility
             
-            api_key_var.trace("w", update_api_key_visibility)
+            api_key_var.trace_add("write", update_api_key_visibility_factory(api_key_entry, api_key_var))
             
             self.translator_vars[t_name] = var
             self.api_key_entries[t_name] = api_key_var
             self.model_entries[t_name] = model_var
+
+        if active_trans_from_settings:
+            if active_trans_from_settings in self.translator_vars:
+                self.translator_vars[active_trans_from_settings].set(True)
+            self.load_and_set_translator_params(active_trans_from_settings)
+        else:
+            self.reset_translator_params_ui()
+
+    def save_active_translator_specific_params(self):
+        active_translator = self.translator_manager.active_translator
+        if not active_translator:
+            return
+
+        prompt = self.prompt_var.get()
+        try:
+            temperature = float(self.temperature_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Temperature must be a valid number.")
+            params = self.load_params_from_translator_file(active_translator)
+            self.temperature_var.set(params.get("temperature", 0.5))
+            return 
+        try:
+            max_tokens = int(self.max_tokens_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Max Tokens must be a valid integer.")
+            params = self.load_params_from_translator_file(active_translator)
+            self.max_tokens_var.set(params.get("max_tokens", 2000))
+            return
+
+        self.save_prompt_temp_tokens_to_file(active_translator, prompt, temperature, max_tokens)
 
     def save_api_key_and_model(self, translator_name, new_key, new_model):
         path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
@@ -857,6 +1039,9 @@ class SettingsWindow:
 
                 old_key = None
                 old_model = None
+                old_prompt = None
+                old_temperature = None
+                old_max_tokens = None
                 if os.path.exists(local_path):
                     with open(local_path, 'r', encoding='utf-8') as f:
                         for line in f:
@@ -865,6 +1050,12 @@ class SettingsWindow:
                                 old_key = line.rstrip(';')
                             elif line.startswith("const MODEL"):
                                 old_model = line.rstrip(';')
+                            elif line.startswith("const PROMPT"):
+                                old_prompt = line.rstrip(';')
+                            elif line.startswith("const TEMPERATURE"):
+                                old_temperature = line.rstrip(';')
+                            elif line.startswith("const MAX_TOKENS"):
+                                old_max_tokens = line.rstrip(';')
                 
                 response = requests.get(raw_url)
                 response.raise_for_status()
@@ -881,6 +1072,24 @@ class SettingsWindow:
                         new_code = re.sub(r"const MODEL\s*=\s*['\"].*?['\"]\s*;", f"{old_model};", new_code)
                     else:
                         new_code = f"{old_model};\n" + new_code
+                
+                if old_prompt:
+                    if "const PROMPT" in new_code:
+                        new_code = re.sub(r"const PROMPT\s*=\s*['\"].*?['\"]\s*;", f"{old_prompt};", new_code)
+                    else:
+                        new_code = f"{old_prompt};\n" + new_code
+                
+                if old_temperature:
+                    if "const TEMPERATURE" in new_code:
+                        new_code = re.sub(r"const TEMPERATURE\s*=\s*[\d.]+\s*;", f"{old_temperature};", new_code)
+                    else:
+                        new_code = f"{old_temperature};\n" + new_code
+                
+                if old_max_tokens:
+                    if "const MAX_TOKENS" in new_code:
+                        new_code = re.sub(r"const MAX_TOKENS\s*=\s*\d+\s*;", f"{old_max_tokens};", new_code)
+                    else:
+                        new_code = f"{old_max_tokens};\n" + new_code
                 
                 with open(local_path, "w", encoding="utf-8", newline='\n') as f:
                     f.write(new_code)
@@ -1003,14 +1212,24 @@ class SettingsWindow:
             return False
 
     def on_translator_check(self, translator_name, var):
+        current_active = self.translator_manager.active_translator
+        new_active_translator = None
+
         if var.get():
             self.translator_manager.set_active_translator(translator_name)
+            new_active_translator = translator_name
             for other_name, other_var in self.translator_vars.items():
                 if other_name != translator_name:
                     other_var.set(False)
+            
+            self.load_and_set_translator_params(translator_name)
+            
         else:
-            if self.translator_manager.active_translator == translator_name:
-                self.translator_manager.set_active_translator("")
+            if current_active == translator_name:
+                self.translator_manager.set_active_translator(None)
+                new_active_translator = None
+                self.reset_translator_params_ui()
+
         self.app.settings["active_translator"] = self.translator_manager.active_translator
         self.app.settings_manager.save_settings(self.app.settings)
 
@@ -1061,6 +1280,11 @@ class SukiTranslateApp:
         self.root.title(APP_NAME)
         self.root.iconbitmap(ICON_DIR)
 
+        self.original_stdout = sys.stdout
+        self.original_stderr = sys.stderr
+        sys.stdout = GlobalTextRedirector()
+        sys.stderr = GlobalTextRedirector()
+
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load_settings()
         self.spell_checker = SpellChecker()
@@ -1077,6 +1301,7 @@ class SukiTranslateApp:
         
         self.console_visible = False
         self.console_window = None
+        self.console_log_text_widget = None
         self.tray_icon = None
 
         self.main_frame = ttk.Frame(root)
@@ -1182,6 +1407,7 @@ class SukiTranslateApp:
 
         menu = (
             pystray.MenuItem("Show", self.show_window),
+            pystray.MenuItem("Settings", self.open_settings),
             pystray.MenuItem("Exit", self.quit_application)
         )
         self.tray_icon = pystray.Icon("SukiTranslate", image, APP_NAME, menu)
@@ -1195,6 +1421,11 @@ class SukiTranslateApp:
         self.root.focus_force()
 
     def quit_application(self):
+        if hasattr(self, 'original_stdout') and self.original_stdout:
+            sys.stdout = self.original_stdout
+        if hasattr(self, 'original_stderr') and self.original_stderr:
+            sys.stderr = self.original_stderr
+        
         if self.tray_icon:
             self.tray_icon.stop()
             self.tray_icon = None
@@ -1240,8 +1471,7 @@ class SukiTranslateApp:
 
     def toggle_console(self):
         if self.console_visible and self.console_window and self.console_window.winfo_exists():
-            self.console_window.destroy()
-            self.console_visible = False
+            self.on_console_close()
         else:
             self.show_console()
     
@@ -1250,51 +1480,93 @@ class SukiTranslateApp:
         self.console_window.title("Console Log")
         self.console_window.geometry("600x400")
         self.console_window.attributes('-topmost', True)
+        self.console_window.configure(bg="#1E1E1E")
+
+        console_style = ttk.Style()
+        console_style.configure(
+            "DarkConsole.TFrame",
+            background="#1E1E1E"
+        )
+        console_style.configure(
+            "DarkConsole.TButton",
+            foreground="white",
+            background="#3C3C3C",
+            font=('Arial', 9)
+        )
+        console_style.map(
+            "DarkConsole.TButton",
+            background=[('active', '#555555'), ('pressed', '#666666')],
+            foreground=[('active', 'white')]
+        )
+        console_style.configure(
+            "DarkConsole.Vertical.TScrollbar",
+            background="#3C3C3C",
+            troughcolor="#2E2E2E",
+            arrowcolor="#DCDCDC",
+            gripcount=0
+        )
+        console_style.map(
+            "DarkConsole.Vertical.TScrollbar",
+            background=[('active', '#555555')],
+            troughcolor=[('active', '#2E2E2E')]
+        )
         
-        frame = ttk.Frame(self.console_window)
-        frame.pack(fill="both", expand=True)
+        text_frame = ttk.Frame(self.console_window, style="DarkConsole.TFrame")
+        text_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
-        scrollbar = ttk.Scrollbar(frame)
+        scrollbar = ttk.Scrollbar(text_frame, style="DarkConsole.Vertical.TScrollbar")
         scrollbar.pack(side="right", fill="y")
         
-        log_text = tk.Text(frame, wrap="word", yscrollcommand=scrollbar.set)
-        log_text.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=log_text.yview)
+        self.console_log_text_widget = tk.Text(
+            text_frame, 
+            wrap="word", 
+            yscrollcommand=scrollbar.set,
+            bg="#1E1E1E",
+            fg="#DCDCDC",
+            insertbackground="white",
+            borderwidth=0, 
+            highlightthickness=0,
+            state='disabled'
+        )
+        self.console_log_text_widget.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.console_log_text_widget.yview)
         
-        clear_button = ttk.Button(self.console_window, text="Clear Log", 
-                                 command=lambda: log_text.delete(1.0, tk.END))
+        button_frame = ttk.Frame(self.console_window, style="DarkConsole.TFrame")
+        button_frame.pack(fill="x", pady=(0,5))
+
+        clear_button = ttk.Button(button_frame, text="Clear Log", 
+                                 command=self.clear_console_log_and_buffer,
+                                 style="DarkConsole.TButton")
         clear_button.pack(pady=5)
         
+        global ACTIVE_LOG_WIDGET
+        ACTIVE_LOG_WIDGET = self.console_log_text_widget
         
-        class TextRedirector:
-            def __init__(self, text_widget):
-                self.text_widget = text_widget
-                self.buffer = ""
-                
-            def write(self, string):
-                self.buffer += string
-                self.text_widget.insert(tk.END, string)
-                self.text_widget.see(tk.END)
-                
-            def flush(self):
-                pass
-        
-        self.original_stdout = sys.stdout
-        
-        sys.stdout = TextRedirector(log_text)
-        
-        def on_console_close():
-            sys.stdout = self.original_stdout
-            self.console_visible = False
-            self.console_window.destroy()
+        self.console_log_text_widget.configure(state='normal')
+        current_logs = "".join(list(GLOBAL_LOG_BUFFER))
+        self.console_log_text_widget.insert(tk.END, current_logs)
+        self.console_log_text_widget.see(tk.END)
+        self.console_log_text_widget.configure(state='disabled')
             
-        self.console_window.protocol("WM_DELETE_WINDOW", on_console_close)
+        self.console_window.protocol("WM_DELETE_WINDOW", self.on_console_close)
         self.console_visible = True
-        
-        print("Console log initialized")
-        print(f"Appdata dir: {APPDATA_DIR}")
-        print(f"Active translator: {self.translator_manager.active_translator}")
-        print(f"OCR mode: {self.settings.get('ocr_mode', 'tesseract')}")
+
+    def clear_console_log_and_buffer(self):
+        if self.console_log_text_widget and self.console_log_text_widget.winfo_exists():
+            self.console_log_text_widget.configure(state='normal')
+            self.console_log_text_widget.delete(1.0, tk.END)
+            self.console_log_text_widget.configure(state='disabled')
+        GLOBAL_LOG_BUFFER.clear()
+        print("Console log and buffer cleared.")
+
+    def on_console_close(self):
+        global ACTIVE_LOG_WIDGET
+        ACTIVE_LOG_WIDGET = None
+        self.console_log_text_widget = None 
+        self.console_visible = False
+        if self.console_window and self.console_window.winfo_exists():
+            self.console_window.destroy()
+            self.console_window = None
 
     def update_language_setting(self, event=None):
         source_display = self.source_lang_combo.get()
@@ -1481,9 +1753,9 @@ class SukiTranslateApp:
     def start_capture(self):
         self.is_selecting = True
         self.x1 = self.y1 = self.x2 = self.y2 = None
-        self.root.after(100, self._create_overlay)
+        self.root.after(100, self.create_overlay)
         
-    def _create_overlay(self):
+    def create_overlay(self):
         if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
             self.overlay.destroy()
 
@@ -1592,7 +1864,7 @@ class SukiTranslateApp:
                     return
 
                 self.translated_input_text = extracted_text
-                print(f"--- Extracted OCR Text ---\n{extracted_text}\n-------------------------")
+                print(f"--- Extracted OCR Text ---\n{extracted_text}\n--------------------------")
 
                 translated_text = self.translate_with_api(
                     extracted_text,
@@ -1609,7 +1881,7 @@ class SukiTranslateApp:
                     return
 
                 self.translated_input_text = translated_text
-                print(f"--- AI Translated Text ---\n{translated_text}\n-------------------------")
+                print(f"--- AI Translated Text ---\n{translated_text}\n--------------------------")
 
             self.display_translation_overlay(translated_text)
 
@@ -1870,6 +2142,8 @@ class SukiTranslateApp:
                     pady=10
                 )
 
+            if self.settings.get("auto_copy_clipboard", False):
+                copy_translated_text(text)
             label.pack()
             label.update_idletasks()
 
@@ -1908,8 +2182,6 @@ class SukiTranslateApp:
             overlay.bind("<FocusOut>", close_overlay)
             overlay.bind("<Button-1>", close_overlay)
 
-
-            
             overlay.deiconify()
             self.current_overlay = overlay
 
@@ -2078,9 +2350,15 @@ if __name__ == "__main__":
     try:
         root = tk.Tk()
         app = SukiTranslateApp(root)
-        
         root.geometry("310x90")
         root.resizable(False, False)
+        
+        settings_manager = SettingsManager()
+        settings = settings_manager.load_settings()
+        if settings.get("run_at_startup", False) and settings.get("minimize_to_tray", False):
+            root.withdraw()
+            app.create_system_tray_icon()
+            threading.Thread(target=app.tray_icon.run, daemon=True).start()
             
         def on_closing():
             if app.settings.get("minimize_to_tray", False):
@@ -2089,16 +2367,24 @@ if __name__ == "__main__":
                     app.create_system_tray_icon()
                     threading.Thread(target=app.tray_icon.run, daemon=True).start()
             else:
-                LOCK_FILE = os.path.join(APPDATA_DIR, 'app.lock')
-                if os.path.exists(LOCK_FILE):
-                    try:
-                        os.remove(LOCK_FILE)
-                    except:
-                        pass
-                root.destroy()
+                app.quit_application()
         
         root.protocol("WM_DELETE_WINDOW", on_closing)
         root.mainloop()
+
     except Exception as e:
-        print(f"Error: {e}")
+        if 'app' in locals() and hasattr(app, 'original_stdout') and app.original_stdout:
+            sys.stdout = app.original_stdout
+        if 'app' in locals() and hasattr(app, 'original_stderr') and app.original_stderr:
+            sys.stderr = app.original_stderr
+        
+        import traceback
+        traceback.print_exc()
+
+        try:
+            if GLOBAL_LOG_BUFFER is not None:
+                 GLOBAL_LOG_BUFFER.append(f"FATAL ERROR: {e}\n{traceback.format_exc()}")
+        except:
+            pass
+
         sys.exit(1)
