@@ -1,3 +1,3 @@
 # SukiTranslate
 
-![0516](https://github.com/user-attachments/assets/bd80b31c-9cfc-4735-ac2d-0acdc5718115)
+![St_3](https://github.com/user-attachments/assets/4db58597-a2c0-4350-8c1e-d63722f6ef63)
