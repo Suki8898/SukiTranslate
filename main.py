@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -186,9 +186,13 @@ def is_already_running():
             with open(LOCK_FILE, 'r') as f:
                 pid = int(f.read())
             try:
-                os.kill(pid, 0)
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(("localhost", 8898))
+                s.send(b"EXIT")
+                s.close()
+                time.sleep(0.5)
                 return True
-            except OSError:
+            except (OSError, socket.error):
                 os.remove(LOCK_FILE)
     except Exception:
         pass
@@ -196,11 +200,27 @@ def is_already_running():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("localhost", 8898))
+        s.listen(1)
+        threading.Thread(target=exit, args=(s,), daemon=True).start()
         with open(LOCK_FILE, 'w') as f:
             f.write(str(os.getpid()))
         return False
     except socket.error:
         return True
+
+def exit(server_socket):
+    while True:
+        try:
+            client_socket, _ = server_socket.accept()
+            data = client_socket.recv(1024)
+            if data == b"EXIT":
+                client_socket.close()
+                server_socket.close()
+                if 'app' in globals():
+                    app.quit_application()
+                break
+        except:
+            break
         
 def download_traineddata(lang_code):
     tessdata_url = f"https://github.com/tesseract-ocr/tessdata/raw/main/{lang_code}.traineddata"
@@ -548,6 +568,7 @@ class SettingsWindow:
         self.setup_general_tab()
         
         self.prompt_var = tk.StringVar(value="")
+        self.model_var = tk.StringVar(value="")
         self.temperature_var = tk.DoubleVar(value=0.5)
         self.max_tokens_var = tk.IntVar(value=2000)
 
@@ -774,7 +795,7 @@ class SettingsWindow:
             messagebox.showerror("Error", f"Could not open translators folder: {e}")
 
     def load_params_from_translator_file(self, translator_name):
-        defaults = {"prompt": "", "temperature": 0.5, "max_tokens": 2000}
+        defaults = {"prompt": "", "model": "", "temperature": 0.5, "max_tokens": 2000}
         if not translator_name:
             return defaults
 
@@ -792,13 +813,16 @@ class SettingsWindow:
             if prompt_match:
                 params["prompt"] = prompt_match.group(1)
 
+            model_match = re.search(r"const\s+MODEL\s*=\s*['\"](.*?)['\"]\s*;", content, re.MULTILINE)
+            if model_match:
+                params["model"] = model_match.group(1)
+
             temp_match = re.search(r"const\s+TEMPERATURE\s*=\s*([\d.]+)\s*;", content, re.MULTILINE)
             if temp_match:
                 try:
                     params["temperature"] = float(temp_match.group(1))
                 except ValueError:
                     print(f"Warning: Could not parse TEMPERATURE from {translator_name}.js")
-
 
             max_tokens_match = re.search(r"const\s+MAX_TOKENS\s*=\s*(\d+)\s*;", content, re.MULTILINE)
             if max_tokens_match:
@@ -857,15 +881,15 @@ class SettingsWindow:
             f.writelines(updated_lines)
 
     def load_and_set_translator_params(self, translator_name):
-        """Loads params for a translator and updates the UI vars."""
         params = self.load_params_from_translator_file(translator_name)
         self.prompt_var.set(params.get("prompt", ""))
+        self.model_var.set(params.get("model", ""))
         self.temperature_var.set(params.get("temperature", 0.5))
         self.max_tokens_var.set(params.get("max_tokens", 2000))
 
     def reset_translator_params_ui(self):
-        """Resets UI vars for params to their defaults."""
         self.prompt_var.set("")
+        self.model_var.set("")
         self.temperature_var.set(0.5)
         self.max_tokens_var.set(2000)
 
@@ -884,19 +908,24 @@ class SettingsWindow:
         prompt_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10))
         prompt_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
-        ttk.Label(list_frame, text="Temperature:").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Model:").grid(row=2, column=0, sticky="w", pady=5)
+        self.model_var = tk.StringVar(value="")
+        model_entry = ttk.Entry(list_frame, textvariable=self.model_var, width=50)
+        model_entry.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(0, 10))
+        model_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
+
+        ttk.Label(list_frame, text="Temperature:").grid(row=3, column=0, sticky="w", pady=5)
         temperature_entry = ttk.Entry(list_frame, textvariable=self.temperature_var, width=10)
-        temperature_entry.grid(row=2, column=1, sticky="w", padx=(0, 5))
+        temperature_entry.grid(row=3, column=1, sticky="w", padx=(0, 5))
         temperature_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
-        ttk.Label(list_frame, text="Max Tokens:").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Max Tokens:").grid(row=4, column=0, sticky="w", pady=5)
         max_tokens_entry = ttk.Entry(list_frame, textvariable=self.max_tokens_var, width=10)
-        max_tokens_entry.grid(row=3, column=1, sticky="w", padx=(0, 5))
+        max_tokens_entry.grid(row=4, column=1, sticky="w", padx=(0, 5))
         max_tokens_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
-        ttk.Label(list_frame, text="Translator").grid(row=4, column=0, sticky="w", pady=5)
-        ttk.Label(list_frame, text="API Key").grid(row=4, column=1, sticky="w", pady=5)
-        ttk.Label(list_frame, text="Model").grid(row=4, column=2, sticky="w", pady=5)
+        ttk.Label(list_frame, text="Translator").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Label(list_frame, text="API Key").grid(row=5, column=1, sticky="w", pady=5)
 
         list_frame.columnconfigure(1, weight=1)
         list_frame.columnconfigure(2, weight=1)
@@ -908,7 +937,7 @@ class SettingsWindow:
         translators = self.translator_manager.get_translator_list()
         active_trans_from_settings = self.app.settings.get("active_translator")
         
-        for row_idx, t_name in enumerate(translators, start=5):
+        for row_idx, t_name in enumerate(translators, start=6):
             var = tk.BooleanVar(value=(t_name == active_trans_from_settings))
             chk = ttk.Checkbutton(
                 list_frame,
@@ -925,15 +954,7 @@ class SettingsWindow:
                 show="•",
                 width=20
             )
-            api_key_entry.grid(row=row_idx, column=1, sticky="ew", padx=(0, 10))
-            
-            model_var = tk.StringVar()
-            model_entry = ttk.Entry(
-                list_frame,
-                textvariable=model_var,
-                width=30
-            )
-            model_entry.grid(row=row_idx, column=2, sticky="ew")
+            api_key_entry.grid(row=row_idx, column=1, columnspan=2, sticky="ew", padx=(0, 10))
             
             key_path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
             if os.path.exists(key_path):
@@ -947,11 +968,10 @@ class SettingsWindow:
                             api_key_entry.config(show="")
                     
                     model_match = re.search(r"const\s+MODEL\s*=\s*['\"](.*?)['\"]\s*;", file_content)
-                    if model_match:
-                        model_var.set(model_match.group(1))
+                    if model_match and t_name == active_trans_from_settings:
+                        self.model_var.set(model_match.group(1))
             
-            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var, model_var_ref=model_var: self.save_api_key_and_model(name, key_var.get(), model_var_ref.get()))
-            model_entry.bind("<FocusOut>", lambda e, name=t_name, key_var_ref=api_key_var, model_var=model_var: self.save_api_key_and_model(name, key_var_ref.get(), model_var.get()))
+            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var: self.save_translator_params_to_file(name, key_var.get(), self.model_var.get()))
             
             def update_api_key_visibility_factory(entry_widget, key_string_var):
                 def update_visibility(*args):
@@ -965,7 +985,7 @@ class SettingsWindow:
             
             self.translator_vars[t_name] = var
             self.api_key_entries[t_name] = api_key_var
-            self.model_entries[t_name] = model_var
+            self.model_entries[t_name] = tk.StringVar(value="")
 
         if active_trans_from_settings:
             if active_trans_from_settings in self.translator_vars:
@@ -980,6 +1000,7 @@ class SettingsWindow:
             return
 
         prompt = self.prompt_var.get()
+        model = self.model_var.get()
         try:
             temperature = float(self.temperature_var.get())
         except ValueError:
@@ -995,33 +1016,56 @@ class SettingsWindow:
             self.max_tokens_var.set(params.get("max_tokens", 2000))
             return
 
-        self.save_prompt_temp_tokens_to_file(active_translator, prompt, temperature, max_tokens)
+        self.save_translator_params_to_file(active_translator, prompt, model, temperature, max_tokens)
 
-    def save_api_key_and_model(self, translator_name, new_key, new_model):
+    def save_translator_params_to_file(self, translator_name, prompt, model, temperature, max_tokens):
         path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
         if not os.path.exists(path):
+            print(f"Cannot save params: Translator file not found for {translator_name}")
             return
 
         with open(path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
-        key_found = False
-        model_found = False
-        for i, line in enumerate(lines):
-            if "const API_KEY" in line:
-                lines[i] = f"const API_KEY = '{new_key}';\n"
-                key_found = True
-            elif "const MODEL" in line:
-                lines[i] = f"const MODEL = '{new_model}';\n"
-                model_found = True
+        updated_lines = []
+        prompt_found, model_found, temperature_found, max_tokens_found = False, False, False, False
 
-        if not key_found:
-            lines.insert(0, f"const API_KEY = '{new_key}';\n")
+        for line in lines:
+            if re.match(r"^\s*const\s+PROMPT\s*=", line):
+                updated_lines.append(f"const PROMPT = '{prompt}';\n")
+                prompt_found = True
+            elif re.match(r"^\s*const\s+MODEL\s*=", line):
+                updated_lines.append(f"const MODEL = '{model}';\n")
+                model_found = True
+            elif re.match(r"^\s*const\s+TEMPERATURE\s*=", line):
+                updated_lines.append(f"const TEMPERATURE = {temperature};\n")
+                temperature_found = True
+            elif re.match(r"^\s*const\s+MAX_TOKENS\s*=", line):
+                updated_lines.append(f"const MAX_TOKENS = {max_tokens};\n")
+                max_tokens_found = True
+            else:
+                updated_lines.append(line)
+        
+        insert_pos = 0
+        for i, line_content in enumerate(lines):
+            stripped_line = line_content.strip()
+            if not stripped_line.startswith("//") and stripped_line != "":
+                insert_pos = i
+                break
+        else:
+            insert_pos = len(updated_lines)
+
+        if not max_tokens_found:
+            updated_lines.insert(insert_pos, f"const MAX_TOKENS = {max_tokens};\n")
+        if not temperature_found:
+            updated_lines.insert(insert_pos, f"const TEMPERATURE = {temperature};\n")
         if not model_found:
-            lines.insert(1 if key_found else 0, f"const MODEL = '{new_model}';\n")
+            updated_lines.insert(insert_pos, f"const MODEL = '{model}';\n")
+        if not prompt_found:
+            updated_lines.insert(insert_pos, f"const PROMPT = '{prompt}';\n")
 
         with open(path, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
+            f.writelines(updated_lines)
 
     def update_translator_files(self):
         try:
@@ -1292,12 +1336,10 @@ class SukiTranslateApp:
 
         self.translator_manager = TranslatorManager()
         
-        self.x1 = None
-        self.y1 = None
-        self.x2 = None
-        self.y2 = None
+        self.x1 = self.y1 = self.x2 = self.y2 = None
         self.is_selecting = False
         self.full_screen_img = None
+        self.rect = None
         
         self.console_visible = False
         self.console_window = None
@@ -1399,7 +1441,7 @@ class SukiTranslateApp:
         self.captured_image = None
         self.current_overlay = None
         
-    def create_system_tray_icon(self):
+    def system_tray_icon(self):
         try:
             image = PILImage.open(ICON_DIR)
         except:
@@ -1783,10 +1825,15 @@ class SukiTranslateApp:
     def cancel_capture(self, event=None):
         if self.is_selecting:
             self.is_selecting = False
-            if self.overlay and self.overlay.winfo_exists():
-                self.overlay.destroy()
+            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+                try:
+                    self.overlay.destroy()
+                except tk.TclError:
+                    pass
+            self.overlay = None
             
         self.x1 = self.y1 = self.x2 = self.y2 = None
+        self.rect = None
 
     def on_mouse_down(self, event):
         if self.is_selecting:
@@ -1795,7 +1842,7 @@ class SukiTranslateApp:
             self.rect = None
 
     def on_mouse_move(self, event):
-        if self.is_selecting:
+        if self.is_selecting and self.x1 is not None and self.y1 is not None:
             self.x2 = event.x
             self.y2 = event.y
             if self.rect:
@@ -1806,24 +1853,37 @@ class SukiTranslateApp:
         if not self.is_selecting:
             return
 
-        self.x2 = event.x
-        self.y2 = event.y
+        self.is_selecting = False
 
-        self.is_selecting = False 
+        final_x2 = event.x
+        final_y2 = event.y
 
-        if self.overlay and self.overlay.winfo_exists():
-            self.overlay.destroy()
+        if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+            try:
+                self.overlay.destroy()
+            except tk.TclError: pass
+        self.overlay = None
 
+        if self.x1 is None or self.y1 is None:
+            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
+            return
+
+        self.x2 = final_x2
+        self.y2 = final_y2
+        
         if self.x1 is None or self.y1 is None or self.x2 is None or self.y2 is None or \
         abs(self.x2 - self.x1) < 5 or abs(self.y2 - self.y1) < 5:
-            notification.notify(
-                title="Suki Translate",
-                message="Screenshot capture area too small.",
-                app_name="Suki Translate",
-                app_icon=ICON_DIR,
-                timeout=3
-            )
-            self.x1 = self.y1 = self.x2 = self.y2 = None
+            if self.tray_icon and self.tray_icon.visible:
+                self.tray_icon.notify("Screenshot capture area too small.", "Suki Translate")
+            else:
+                notification.notify(
+                    title="Suki Translate",
+                    message="Screenshot capture area too small.",
+                    app_name=APP_NAME,
+                    app_icon=ICON_DIR,
+                    timeout=3
+                )
+            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
             return
 
         self.x1, self.x2 = min(self.x1, self.x2), max(self.x1, self.x2)
@@ -1839,6 +1899,8 @@ class SukiTranslateApp:
                 return
 
             captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
+            captured_image.save("Screenshot.png")
+            
 
             ocr_mode = self.settings.get("ocr_mode", "tesseract")
             if ocr_mode == "Tesseract":
@@ -2019,11 +2081,9 @@ class SukiTranslateApp:
             font_color = self.settings.get("custom_font_color", "#db9aaa")
             bg_color = self.settings.get("custom_bg_color", "#000000")
 
-  
-
             overlay = tk.Toplevel(self.root)
+            overlay.overrideredirect(True)
             overlay.withdraw()
-            overlay.overrideredirect(True) 
             overlay.attributes('-topmost', True)
             overlay.configure(bg=bg_color)
 
@@ -2033,10 +2093,7 @@ class SukiTranslateApp:
             if font_path is None:
                 font_path = "arial.ttf"
                 print(f"Font {font_name} not found, using arial.ttf")            
-            font_size = self.settings.get("result_font_size", 12)
-            font_color = self.settings.get("custom_font_color", "#db9aaa")
-
-
+           
             if display_mode == "blur":
                 img_pil = self.captured_image.convert("RGB")
                 img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
@@ -2049,7 +2106,7 @@ class SukiTranslateApp:
                 inpainted_img_pil = Image.fromarray(cv2.cvtColor(inpainted_img, cv2.COLOR_BGR2RGB))
                 draw = ImageDraw.Draw(inpainted_img_pil)
                 
-                current_font_size = font_size
+                current_font_size = font_size * 1.3
                 while True:
                     try:
                         font = ImageFont.truetype(font_path, current_font_size)
@@ -2062,7 +2119,7 @@ class SukiTranslateApp:
                         break  
                     else:
                         current_font_size -= 1
-                        if current_font_size < 1:
+                        if current_font_size < 8:
                             break
 
                 total_text_height = len(lines) * font.size
@@ -2094,7 +2151,7 @@ class SukiTranslateApp:
                 bg_pil = Image.fromarray(cv2.cvtColor(bg_img, cv2.COLOR_BGR2RGB))
                 draw = ImageDraw.Draw(bg_pil)
 
-                current_font_size = font_size
+                current_font_size = font_size * 1.3
                 while True:
                     try:
                         font = ImageFont.truetype(font_path, current_font_size)
@@ -2107,7 +2164,7 @@ class SukiTranslateApp:
                         break
                     else:
                         current_font_size -= 1
-                        if current_font_size < 1:
+                        if current_font_size < 8:
                             break
 
                 total_text_height = len(lines) * font.size
@@ -2124,10 +2181,7 @@ class SukiTranslateApp:
 
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
-
-                draw_bbox = draw.textbbox((10, 10), text, font=font)
-                text_height = draw_bbox[3] - draw_bbox[1] + 20
-                overlay.geometry(f"{width}x{text_height}+{self.x1}+{self.y1}")
+                overlay.geometry(f"{width}x{height}+{self.x1}+{self.y1}")
 
             else:  # manual
                 label = tk.Label(
@@ -2141,17 +2195,14 @@ class SukiTranslateApp:
                     padx=10,
                     pady=10
                 )
+                required_height = label.winfo_reqheight()
+                overlay.geometry(f"{capture_width}x{required_height}+{self.x1}+{self.y1}")
 
-            if self.settings.get("auto_copy_clipboard", False):
-                copy_translated_text(text)
             label.pack()
             label.update_idletasks()
 
-            required_height = label.winfo_reqheight()
-            overlay.geometry(f"{capture_width}x{required_height}+{self.x1}+{self.y1}")
-
             label.pack(fill="both", expand=True)
-            overlay.focus_force()
+            overlay.focus_force() #
 
             context_menu = tk.Menu(overlay, tearoff=0)
             is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
@@ -2357,14 +2408,14 @@ if __name__ == "__main__":
         settings = settings_manager.load_settings()
         if settings.get("run_at_startup", False) and settings.get("minimize_to_tray", False):
             root.withdraw()
-            app.create_system_tray_icon()
+            app.system_tray_icon()
             threading.Thread(target=app.tray_icon.run, daemon=True).start()
             
         def on_closing():
             if app.settings.get("minimize_to_tray", False):
                 app.root.withdraw()
                 if not app.tray_icon:
-                    app.create_system_tray_icon()
+                    app.system_tray_icon()
                     threading.Thread(target=app.tray_icon.run, daemon=True).start()
             else:
                 app.quit_application()
