@@ -25,3 +25,7 @@ Here are some models known to work with image inputs:
 
 - XAI:
     grok-2-vision-1212
+
+- Perplexity:
+    sonar
+  etc
