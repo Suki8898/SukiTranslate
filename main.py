@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -637,7 +637,7 @@ class SettingsWindow:
         self.auto_copy_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_clipboard", False))
         auto_copy_clipboard_chk = ttk.Checkbutton(
             self.general_frame,
-            text="Auto save translated text to clipboard",
+            text="Auto save Result Text to clipboard",
             variable=self.auto_copy_clipboard_var,
             command=self.update_general_settings
         )
@@ -1418,7 +1418,7 @@ class SukiTranslateApp:
         
         self.settings_button.pack(side="top", padx=5, pady=(12, 5))
         
-        self.log_button = ttk.Button(self.right_frame, text="log", width=3, command=self.toggle_console)
+        self.log_button = ttk.Button(self.right_frame, text="📜", width=3, command=self.toggle_console)
         self.log_button.pack(side="top", padx=5, pady=(5, 0))
 
         self.canvas = tk.Canvas(self.main_frame, highlightthickness=0)
@@ -1519,6 +1519,7 @@ class SukiTranslateApp:
     
     def show_console(self):
         self.console_window = tk.Toplevel(self.root)
+        self.console_window.iconbitmap(ICON_DIR)
         self.console_window.title("Console Log")
         self.console_window.geometry("600x400")
         self.console_window.attributes('-topmost', True)
@@ -1899,7 +1900,7 @@ class SukiTranslateApp:
                 return
 
             captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
-            captured_image.save("Screenshot.png")
+            #captured_image.save("Screenshot.png")
             
 
             ocr_mode = self.settings.get("ocr_mode", "tesseract")
@@ -1917,8 +1918,6 @@ class SukiTranslateApp:
 
                 if self.spell_checker.current_dict:
                     is_correct, misspelled = self.spell_checker.check_spelling(extracted_text)
-                    if not is_correct:
-                        print(f"Found {len(misspelled)} spelling errors (auto-corrected)")
 
                 active_translator = self.translator_manager.get_active_translator()
                 if not active_translator:
@@ -1926,7 +1925,7 @@ class SukiTranslateApp:
                     return
 
                 self.translated_input_text = extracted_text
-                print(f"--- Extracted OCR Text ---\n{extracted_text}\n--------------------------")
+                print(f"--- Extracted OCR Text -----------------------------------------------\n{extracted_text}")
 
                 translated_text = self.translate_with_api(
                     extracted_text,
@@ -1934,16 +1933,16 @@ class SukiTranslateApp:
                     self.target_lang_combo.get(),
                     active_translator['path']
                 )
-            else:
-                translated_text = self.extract_text_with_ai(captured_image)
-                self.last_extracted_text = translated_text
 
-                if not translated_text.strip():
-                    messagebox.showinfo("Info", "No text detected or translated in selected area.")
-                    return
+            translated_text = self.extract_text_with_ai(captured_image)
+            self.last_extracted_text = translated_text
 
-                self.translated_input_text = translated_text
-                print(f"--- AI Translated Text ---\n{translated_text}\n--------------------------")
+            if not translated_text.strip():
+                messagebox.showinfo("Info", "No text detected or translated in selected area.")
+                return
+
+            self.translated_input_text = translated_text
+            print(f"--- Result Text ------------------------------------------------------\n{translated_text}")
 
             self.display_translation_overlay(translated_text)
 
@@ -2212,7 +2211,7 @@ class SukiTranslateApp:
                 state="disabled" if is_ai_mode else "normal"
             )
             context_menu.add_command(
-                label="Copy Translated Text",
+                label="Copy Result Text",
                 command=lambda: copy_translated_text(text)
             )
             context_menu.add_command(
