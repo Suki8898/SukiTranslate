@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -1943,6 +1943,13 @@ class SukiTranslateApp:
 
             self.translated_input_text = translated_text
             print(f"--- Result Text ------------------------------------------------------\n{translated_text}")
+
+            if self.settings.get("auto_copy_clipboard", False):
+                try:
+                    copy_translated_text(translated_text)
+                    print("Auto-copied result text to clipboard.")
+                except Exception as clipboard_error:
+                    print(f"Error auto-copying to clipboard: {clipboard_error}")
 
             self.display_translation_overlay(translated_text)
 
