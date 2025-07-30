@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -1933,9 +1933,9 @@ class SukiTranslateApp:
                     self.target_lang_combo.get(),
                     active_translator['path']
                 )
-
-            translated_text = self.extract_text_with_ai(captured_image)
-            self.last_extracted_text = translated_text
+            elif ocr_mode == "AI":
+                translated_text = self.extract_text_with_ai(captured_image)
+                self.last_extracted_text = translated_text
 
             if not translated_text.strip():
                 messagebox.showinfo("Info", "No text detected or translated in selected area.")
