@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -393,15 +393,7 @@ def set_startup(enabled):
 
 def prepare_image(image):
     img_array = np.array(image)
-
-    height, width = img_array.shape[:2]
-    scale = max(500.0 / min(width, height), 1.0) if width * height > 0 else 2.0
-    if scale > 1.0:
-        max_scale = min(np.sqrt(2**30 / (width * height)), scale)
-        if max_scale > 1.0:
-            img_cv2 = cv2.resize(img_array, None, fx=max_scale, fy=max_scale, interpolation=cv2.INTER_LINEAR)
-    result_img = Image.fromarray(img_cv2)
-    return result_img
+    return Image.fromarray(img_array)
 
 class SpellChecker:
     def __init__(self):
@@ -1018,7 +1010,7 @@ class SettingsWindow:
 
         self.save_translator_params_to_file(active_translator, prompt, model, temperature, max_tokens)
 
-    def save_translator_params_to_file(self, translator_name, prompt, model, temperature, max_tokens):
+    def save_translator_params_to_file(self, translator_name, api_key, model, temperature=0.5, max_tokens=2000):
         path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
         if not os.path.exists(path):
             print(f"Cannot save params: Translator file not found for {translator_name}")
@@ -1028,12 +1020,12 @@ class SettingsWindow:
             lines = f.readlines()
 
         updated_lines = []
-        prompt_found, model_found, temperature_found, max_tokens_found = False, False, False, False
+        key_found, model_found, temperature_found, max_tokens_found = False, False, False, False
 
         for line in lines:
-            if re.match(r"^\s*const\s+PROMPT\s*=", line):
-                updated_lines.append(f"const PROMPT = '{prompt}';\n")
-                prompt_found = True
+            if re.match(r"^\s*const\s+API_KEY\s*=", line):
+                updated_lines.append(f"const API_KEY = '{api_key}';\n")
+                key_found = True
             elif re.match(r"^\s*const\s+MODEL\s*=", line):
                 updated_lines.append(f"const MODEL = '{model}';\n")
                 model_found = True
@@ -1045,27 +1037,19 @@ class SettingsWindow:
                 max_tokens_found = True
             else:
                 updated_lines.append(line)
-        
-        insert_pos = 0
-        for i, line_content in enumerate(lines):
-            stripped_line = line_content.strip()
-            if not stripped_line.startswith("//") and stripped_line != "":
-                insert_pos = i
-                break
-        else:
-            insert_pos = len(updated_lines)
 
-        if not max_tokens_found:
-            updated_lines.insert(insert_pos, f"const MAX_TOKENS = {max_tokens};\n")
-        if not temperature_found:
-            updated_lines.insert(insert_pos, f"const TEMPERATURE = {temperature};\n")
+        if not key_found:
+            updated_lines.insert(0, f"const API_KEY = '{api_key}';\n")
         if not model_found:
-            updated_lines.insert(insert_pos, f"const MODEL = '{model}';\n")
-        if not prompt_found:
-            updated_lines.insert(insert_pos, f"const PROMPT = '{prompt}';\n")
+            updated_lines.insert(1, f"const MODEL = '{model}';\n")
+        if not temperature_found:
+            updated_lines.insert(2, f"const TEMPERATURE = {temperature};\n")
+        if not max_tokens_found:
+            updated_lines.insert(3, f"const MAX_TOKENS = {max_tokens};\n")
 
         with open(path, 'w', encoding='utf-8') as f:
             f.writelines(updated_lines)
+
 
     def update_translator_files(self):
         try:
