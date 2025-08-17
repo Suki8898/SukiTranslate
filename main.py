@@ -24,9 +24,10 @@ import webbrowser
 from plyer import notification
 import shutil
 import collections
+import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -70,6 +71,11 @@ LOCK_FILE = os.path.join(APPDATA_DIR, 'app.lock')
 
 GLOBAL_LOG_BUFFER = collections.deque(maxlen=2000) 
 ACTIVE_LOG_WIDGET = None 
+
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except:
+    ctypes.windll.user32.SetProcessDPIAware()
 
 class GlobalTextRedirector:
     def write(self, string):
@@ -550,7 +556,9 @@ class SettingsWindow:
         self.translator_manager = translator_manager
         self.window = tk.Toplevel(app.root)
         self.window.title("Settings")
-        self.window.geometry("500x400")
+        self.window.update_idletasks()
+        dpi_scale = self.window.winfo_fpixels('1i') / 96
+        self.window.geometry(f"{int(500 * dpi_scale * 100 / 100)}x{int(400 * dpi_scale * 100 / 100)}")
         self.window.iconbitmap(ICON_DIR)
 
         self.notebook = ttk.Notebook(self.window)
@@ -1783,26 +1791,39 @@ class SukiTranslateApp:
         if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
             self.overlay.destroy()
 
-        self.overlay = tk.Toplevel(self.root)
-        self.overlay.attributes('-fullscreen', True)
-        self.overlay.attributes('-topmost', True)
-        self.overlay.attributes('-alpha', 1)  
-        self.overlay.config(cursor='crosshair')
-
         with mss.mss() as sct:
             monitor = sct.monitors[0]
-            self.full_screen_img = Image.frombytes("RGB", (monitor["width"], monitor["height"]), sct.grab(monitor).bgra, "raw", "BGRX")
-            self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
+            mon_w, mon_h = monitor["width"], monitor["height"]
 
-            self.overlay_canvas = tk.Canvas(self.overlay, width=monitor["width"], height=monitor["height"])
-            self.overlay_canvas.pack()
-            self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+            self.full_screen_img = Image.frombytes("RGB", (mon_w, mon_h), sct.grab(monitor).bgra, "raw", "BGRX" )
 
-            self.overlay_canvas.bind("<ButtonPress-1>", self.on_mouse_down)
-            self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
-            self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
-            self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
+        self.overlay = tk.Toplevel(self.root)
+        self.overlay.overrideredirect(True)
+        self.overlay.geometry(f"{mon_w}x{mon_h}+0+0")
+        self.overlay.lift()
+        self.overlay.attributes('-topmost', True)
+        self.overlay.config(cursor='crosshair')
 
+        scr_w = self.root.winfo_screenwidth()
+        scr_h = self.root.winfo_screenheight()
+        self.scale_x = mon_w / scr_w
+        self.scale_y = mon_h / scr_h
+
+        self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
+        self.overlay_canvas = tk.Canvas(self.overlay, width=mon_w, height=mon_h, highlightthickness=0)
+        self.overlay_canvas.place(x=0, y=0, width=mon_w, height=mon_h)
+        self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+
+        border_thickness = 3
+        self.overlay_canvas.create_rectangle(0, 0, mon_w, border_thickness, fill="white", width=0)
+        self.overlay_canvas.create_rectangle(0, mon_h - border_thickness, mon_w, mon_h, fill="white", width=0)
+        self.overlay_canvas.create_rectangle(0, 0, border_thickness, mon_h, fill="white", width=0)
+        self.overlay_canvas.create_rectangle(mon_w - border_thickness, 0, mon_w, mon_h, fill="white", width=0)
+
+        self.overlay_canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+        self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
+        self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
 
     def cancel_capture(self, event=None):
         if self.is_selecting:
@@ -1834,53 +1855,62 @@ class SukiTranslateApp:
     def on_mouse_up(self, event):
         if not self.is_selecting:
             return
-
         self.is_selecting = False
 
-        final_x2 = event.x
-        final_y2 = event.y
+        x1l, y1l = self.x1, self.y1
+        x2l, y2l = event.x, event.y
+        x1l, x2l = min(x1l, x2l), max(x1l, x2l)
+        y1l, y2l = min(y1l, y2l), max(y1l, y2l)
+
+        if (x2l - x1l) < 5 or (y2l - y1l) < 5:
+            self.notify_small_area()
+            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
+            return
+
+        cw = max(1, self.overlay_canvas.winfo_width())
+        ch = max(1, self.overlay_canvas.winfo_height())
 
         if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
             try:
                 self.overlay.destroy()
-            except tk.TclError: pass
+            except tk.TclError:
+                pass
         self.overlay = None
 
-        if self.x1 is None or self.y1 is None:
-            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
-            return
+        iw, ih = self.full_screen_img.size
 
-        self.x2 = final_x2
-        self.y2 = final_y2
-        
-        if self.x1 is None or self.y1 is None or self.x2 is None or self.y2 is None or \
-        abs(self.x2 - self.x1) < 5 or abs(self.y2 - self.y1) < 5:
-            if self.tray_icon and self.tray_icon.visible:
-                self.tray_icon.notify("Screenshot capture area too small.", "Suki Translate")
-            else:
-                notification.notify(
-                    title="Suki Translate",
-                    message="Screenshot capture area too small.",
-                    app_name=APP_NAME,
-                    app_icon=ICON_DIR,
-                    timeout=3
-                )
-            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
-            return
+        sx = iw / cw
+        sy = ih / ch
 
-        self.x1, self.x2 = min(self.x1, self.x2), max(self.x1, self.x2)
-        self.y1, self.y2 = min(self.y1, self.y2), max(self.y1, self.y2)
+        x1p = int(round(x1l * sx))
+        y1p = int(round(y1l * sy))
+        x2p = int(round(x2l * sx))
+        y2p = int(round(y2l * sy))
 
-        self.captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
+        x1p = max(0, min(x1p, iw))
+        x2p = max(0, min(x2p, iw))
+        y1p = max(0, min(y1p, ih))
+        y2p = max(0, min(y2p, ih))
+
+        self.captured_image = self.full_screen_img.crop((x1p, y1p, x2p, y2p))
+
+        print("Logical size (canvas):", cw, ch)
+        print("Image size (physical):", iw, ih)
+        print("Scale (auto):", sx, sy)
+        print("Crop logical:", x1l, y1l, x2l, y2l)
+        print("Crop physical:", x1p, y1p, x2p, y2p)
+
         threading.Thread(target=self.perform_translation).start()
+
+
 
     def perform_translation(self):
         try:
-            if self.full_screen_img is None:
+            if self.captured_image is None:
                 messagebox.showerror("Error", "Please capture an area first.")
                 return
 
-            captured_image = self.full_screen_img.crop((self.x1, self.y1, self.x2, self.y2))
+            captured_image = self.captured_image
             #captured_image.save("Screenshot.png")
             
 
@@ -2189,7 +2219,7 @@ class SukiTranslateApp:
             label.update_idletasks()
 
             label.pack(fill="both", expand=True)
-            overlay.focus_force() #
+            overlay.focus_force()
 
             context_menu = tk.Menu(overlay, tearoff=0)
             is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
@@ -2231,7 +2261,9 @@ class SukiTranslateApp:
         edit_window = tk.Toplevel(self.root)
         edit_window.title("Edit and Translate")
         edit_window.iconbitmap(ICON_DIR)
-        edit_window.geometry("600x600")
+        edit_window.update_idletasks()
+        dpi_scale = edit_window.winfo_fpixels('1i') / 96.0
+        edit_window.geometry(f"{int(600 * dpi_scale * 100 / 100)}x{int(600 * dpi_scale * 100 / 100)}")
         edit_window.resizable(True, True)
 
         self.apply_theme()
@@ -2386,11 +2418,18 @@ if __name__ == "__main__":
         sys.exit(0)
 
     try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except:
+        ctypes.windll.user32.SetProcessDPIAware()
+
+    try:
         root = tk.Tk()
         app = SukiTranslateApp(root)
-        root.geometry("310x90")
+        root.update_idletasks()
+        dpi = root.winfo_fpixels('1i')
+        root.geometry(f"{int(310 * dpi / 100)}x{int(90 * dpi / 100)}")
         root.resizable(False, False)
-        
+
         settings_manager = SettingsManager()
         settings = settings_manager.load_settings()
         if settings.get("run_at_startup", False) and settings.get("minimize_to_tray", False):
