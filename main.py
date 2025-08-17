@@ -26,7 +26,7 @@ import shutil
 import collections
 
 APP_NAME = "Suki Translate"
-VERSION = "1.2.5"
+VERSION = "1.3.0"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -893,28 +893,27 @@ class SettingsWindow:
         update_btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
 
         open_folder_btn = ttk.Button(list_frame, text="📂 Open folder", command=self.open_translators_folder)
-        open_folder_btn.grid(row=0, column=2, sticky="e", pady=5)
+        open_folder_btn.grid(row=0, column=2, sticky="e", pady=5, padx=(0, 100))
+
+        save_btn = ttk.Button(list_frame, text="💾 Save", command=self.save_active_translator_specific_params)
+        save_btn.grid(row=0, column=2, sticky="e", pady=5, padx=(0, 10))
 
         ttk.Label(list_frame, text="Prompt:").grid(row=1, column=0, sticky="w", pady=5)
         prompt_entry = ttk.Entry(list_frame, textvariable=self.prompt_var, width=50)
         prompt_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10))
-        prompt_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
         ttk.Label(list_frame, text="Model:").grid(row=2, column=0, sticky="w", pady=5)
         self.model_var = tk.StringVar(value="")
         model_entry = ttk.Entry(list_frame, textvariable=self.model_var, width=50)
         model_entry.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(0, 10))
-        model_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
         ttk.Label(list_frame, text="Temperature:").grid(row=3, column=0, sticky="w", pady=5)
         temperature_entry = ttk.Entry(list_frame, textvariable=self.temperature_var, width=10)
         temperature_entry.grid(row=3, column=1, sticky="w", padx=(0, 5))
-        temperature_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
         ttk.Label(list_frame, text="Max Tokens:").grid(row=4, column=0, sticky="w", pady=5)
         max_tokens_entry = ttk.Entry(list_frame, textvariable=self.max_tokens_var, width=10)
         max_tokens_entry.grid(row=4, column=1, sticky="w", padx=(0, 5))
-        max_tokens_entry.bind("<FocusOut>", lambda e: self.save_active_translator_specific_params())
 
         ttk.Label(list_frame, text="Translator").grid(row=5, column=0, sticky="w", pady=5)
         ttk.Label(list_frame, text="API Key").grid(row=5, column=1, sticky="w", pady=5)
@@ -962,9 +961,7 @@ class SettingsWindow:
                     model_match = re.search(r"const\s+MODEL\s*=\s*['\"](.*?)['\"]\s*;", file_content)
                     if model_match and t_name == active_trans_from_settings:
                         self.model_var.set(model_match.group(1))
-            
-            api_key_entry.bind("<FocusOut>", lambda e, name=t_name, key_var=api_key_var: self.save_translator_params_to_file(name, key_var.get(), self.model_var.get()))
-            
+                     
             def update_api_key_visibility_factory(entry_widget, key_string_var):
                 def update_visibility(*args):
                     if key_string_var.get() == "YOUR_API_KEY_HERE":
@@ -1008,9 +1005,49 @@ class SettingsWindow:
             self.max_tokens_var.set(params.get("max_tokens", 2000))
             return
 
-        self.save_translator_params_to_file(active_translator, prompt, model, temperature, max_tokens)
 
-    def save_translator_params_to_file(self, translator_name, api_key, model, temperature=0.5, max_tokens=2000):
+        api_key = ""
+        if active_translator in self.api_key_entries:
+            api_key = self.api_key_entries[active_translator].get()
+
+        self.save_translator_params_to_file(
+            active_translator,
+            prompt,
+            model,
+            temperature,
+            max_tokens,
+            api_key
+        )
+
+        for t_name, api_key_var in self.api_key_entries.items():
+            if t_name == active_translator:
+                continue
+
+            api_key_val = api_key_var.get().strip()
+            if api_key_val:
+                path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
+                if not os.path.exists(path):
+                    continue
+
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                updated_lines = []
+                key_found = False
+                for line in lines:
+                    if re.match(r"^\s*const\s+API_KEY\s*=", line):
+                        updated_lines.append(f"const API_KEY = '{api_key_val}';\n")
+                        key_found = True
+                    else:
+                        updated_lines.append(line)
+
+                if not key_found:
+                    updated_lines.append(f"const API_KEY = '{api_key_val}';\n")
+
+                with open(path, "w", encoding="utf-8") as f:
+                    f.writelines(updated_lines)
+
+    def save_translator_params_to_file(self, translator_name, prompt, model, temperature=0.5, max_tokens=2000, api_key=""):
         path = os.path.join(TRANSLATORS_DIR, f"{translator_name}.js")
         if not os.path.exists(path):
             print(f"Cannot save params: Translator file not found for {translator_name}")
@@ -1020,12 +1057,15 @@ class SettingsWindow:
             lines = f.readlines()
 
         updated_lines = []
-        key_found, model_found, temperature_found, max_tokens_found = False, False, False, False
+        key_found, prompt_found, model_found, temperature_found, max_tokens_found = False, False, False, False, False
 
         for line in lines:
             if re.match(r"^\s*const\s+API_KEY\s*=", line):
                 updated_lines.append(f"const API_KEY = '{api_key}';\n")
                 key_found = True
+            elif re.match(r"^\s*const\s+PROMPT\s*=", line):
+                updated_lines.append(f"const PROMPT = '{prompt}';\n")
+                prompt_found = True
             elif re.match(r"^\s*const\s+MODEL\s*=", line):
                 updated_lines.append(f"const MODEL = '{model}';\n")
                 model_found = True
@@ -1039,16 +1079,19 @@ class SettingsWindow:
                 updated_lines.append(line)
 
         if not key_found:
-            updated_lines.insert(0, f"const API_KEY = '{api_key}';\n")
+            updated_lines.append(f"const API_KEY = '{api_key}';\n")
+        if not prompt_found:
+            updated_lines.append(f"const PROMPT = '{prompt}';\n")
         if not model_found:
-            updated_lines.insert(1, f"const MODEL = '{model}';\n")
+            updated_lines.append(f"const MODEL = '{model}';\n")
         if not temperature_found:
-            updated_lines.insert(2, f"const TEMPERATURE = {temperature};\n")
+            updated_lines.append(f"const TEMPERATURE = {temperature};\n")
         if not max_tokens_found:
-            updated_lines.insert(3, f"const MAX_TOKENS = {max_tokens};\n")
+            updated_lines.append(f"const MAX_TOKENS = {max_tokens};\n")
 
         with open(path, 'w', encoding='utf-8') as f:
             f.writelines(updated_lines)
+
 
 
     def update_translator_files(self):
@@ -1061,71 +1104,25 @@ class SettingsWindow:
             for file_info in files:
                 if not file_info["name"].endswith(".js"):
                     continue
+
                 filename = file_info["name"]
                 raw_url = file_info["download_url"]
                 local_path = os.path.join(TRANSLATORS_DIR, filename)
 
-                old_key = None
-                old_model = None
-                old_prompt = None
-                old_temperature = None
-                old_max_tokens = None
-                if os.path.exists(local_path):
-                    with open(local_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line.startswith("const API_KEY"):
-                                old_key = line.rstrip(';')
-                            elif line.startswith("const MODEL"):
-                                old_model = line.rstrip(';')
-                            elif line.startswith("const PROMPT"):
-                                old_prompt = line.rstrip(';')
-                            elif line.startswith("const TEMPERATURE"):
-                                old_temperature = line.rstrip(';')
-                            elif line.startswith("const MAX_TOKENS"):
-                                old_max_tokens = line.rstrip(';')
-                
                 response = requests.get(raw_url)
                 response.raise_for_status()
                 new_code = response.text.replace('\r\n', '\n')
-                
-                if old_key:
-                    if "const API_KEY" in new_code:
-                        new_code = re.sub(r"const API_KEY\s*=\s*['\"].*?['\"]\s*;", f"{old_key};", new_code)
-                    else:
-                        new_code = f"{old_key};\n" + new_code
-                
-                if old_model:
-                    if "const MODEL" in new_code:
-                        new_code = re.sub(r"const MODEL\s*=\s*['\"].*?['\"]\s*;", f"{old_model};", new_code)
-                    else:
-                        new_code = f"{old_model};\n" + new_code
-                
-                if old_prompt:
-                    if "const PROMPT" in new_code:
-                        new_code = re.sub(r"const PROMPT\s*=\s*['\"].*?['\"]\s*;", f"{old_prompt};", new_code)
-                    else:
-                        new_code = f"{old_prompt};\n" + new_code
-                
-                if old_temperature:
-                    if "const TEMPERATURE" in new_code:
-                        new_code = re.sub(r"const TEMPERATURE\s*=\s*[\d.]+\s*;", f"{old_temperature};", new_code)
-                    else:
-                        new_code = f"{old_temperature};\n" + new_code
-                
-                if old_max_tokens:
-                    if "const MAX_TOKENS" in new_code:
-                        new_code = re.sub(r"const MAX_TOKENS\s*=\s*\d+\s*;", f"{old_max_tokens};", new_code)
-                    else:
-                        new_code = f"{old_max_tokens};\n" + new_code
-                
+
                 with open(local_path, "w", encoding="utf-8", newline='\n') as f:
                     f.write(new_code)
-            
+
+                print(f"✅ Updated {filename}")
+
             return True
         except Exception as e:
             messagebox.showerror("Update Failed", f"Error downloading translators from GitHub:\n{e}")
             return False
+
 
     def setup_display_tab(self):
         self.dark_mode_var = tk.BooleanVar(value=self.app.settings.get("dark_mode", False))
