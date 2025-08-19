@@ -27,7 +27,7 @@ import collections
 import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -1207,9 +1207,7 @@ class SettingsWindow:
 
         self.sample_text = tk.StringVar(value=self.app.settings.get("sample_text", "Suki loves boba, naps, and head scratches UwU"))
 
-        self.sample_entry = tk.Entry(self.display_tab, textvariable=self.sample_text,
-                                    font=(self.font_var.get(), self.font_size_var.get()),
-                                    fg=self.font_color.get(), bg=self.bg_color.get(), justify="center")
+        self.sample_entry = tk.Entry(self.display_tab, textvariable=self.sample_text, font=(self.font_var.get(), self.font_size_var.get()), fg=self.font_color.get(), bg=self.bg_color.get(), justify="center")
         self.sample_entry.grid(row=6 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
 
         def update_sample_text(*args):
@@ -1218,7 +1216,6 @@ class SettingsWindow:
                 fg=self.font_color.get(),
                 bg=self.bg_color.get()
             )
-
 
         self.font_var.trace_add("write", update_sample_text)
         self.font_size_var.trace_add("write", update_sample_text)
@@ -1293,12 +1290,12 @@ class SettingsWindow:
         author_link.pack(side="left")
         author_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Suki8898"))
 
-        author_frame = ttk.Frame(about_frame)
-        author_frame.pack(anchor="center", pady=5)
-        ttk.Label(author_frame, text="Support: ").pack(side="left")
-        author_link = ttk.Label(author_frame, text="Buymeacoffee", foreground="#db9aaa", cursor="hand2")
-        author_link.pack(side="left")
-        author_link.bind("<Button-1>", lambda e: webbrowser.open("https://buymeacoffee.com/suki8898"))
+        support_frame = ttk.Frame(about_frame)
+        support_frame.pack(anchor="center", pady=5)
+        ttk.Label(support_frame, text="Support: ").pack(side="left")
+        support_link = ttk.Label(support_frame, text="Buymeacoffee", foreground="#db9aaa", cursor="hand2")
+        support_link.pack(side="left")
+        support_link.bind("<Button-1>", lambda e: webbrowser.open("https://buymeacoffee.com/suki8898"))
 
         license_frame = ttk.Frame(about_frame)
         license_frame.pack(anchor="center", pady=5)
@@ -1306,6 +1303,20 @@ class SettingsWindow:
         license_link = ttk.Label(license_frame, text="MIT", foreground="#db9aaa", cursor="hand2")
         license_link.pack(side="left")
         license_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Suki8898/SukiTranslate/blob/main/LICENSE"))
+
+        wiki_frame = ttk.Frame(about_frame)
+        wiki_frame.pack(anchor="center", pady=5)
+
+        wiki_link = ttk.Label(wiki_frame, text="Wiki", foreground="#db9aaa", cursor="hand2")
+        wiki_link.pack(side="left")
+        wiki_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Suki8898/SukiTranslate/wiki"))
+
+        issue_frame = ttk.Frame(about_frame)
+        issue_frame.pack(anchor="center", pady=5)
+
+        issue_link = ttk.Label(issue_frame, text="Report issue", foreground="#db9aaa", cursor="hand2")
+        issue_link.pack(side="left")
+        issue_link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Suki8898/SukiTranslate/issues"))
 
 class SukiTranslateApp:
     def __init__(self, root):
@@ -1894,12 +1905,6 @@ class SukiTranslateApp:
 
         self.captured_image = self.full_screen_img.crop((x1p, y1p, x2p, y2p))
 
-        print("Logical size (canvas):", cw, ch)
-        print("Image size (physical):", iw, ih)
-        print("Scale (auto):", sx, sy)
-        print("Crop logical:", x1l, y1l, x2l, y2l)
-        print("Crop physical:", x1p, y1p, x2p, y2p)
-
         threading.Thread(target=self.perform_translation).start()
 
 
@@ -2152,6 +2157,10 @@ class SukiTranslateApp:
                 self.tk_img = ImageTk.PhotoImage(inpainted_img_pil)
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
+
+                overlay.geometry(f"{capture_width}x{capture_height}+{self.x1}+{self.y1}")
+                overlay.deiconify()
+
 
             elif display_mode == "auto":
                 img_pil = self.captured_image.convert("RGB")
@@ -2426,8 +2435,8 @@ if __name__ == "__main__":
         root = tk.Tk()
         app = SukiTranslateApp(root)
         root.update_idletasks()
-        dpi = root.winfo_fpixels('1i')
-        root.geometry(f"{int(310 * dpi / 100)}x{int(90 * dpi / 100)}")
+        dpi = root.winfo_fpixels('1i') 
+        root.geometry(f"{int(315 * dpi / 96)}x{int(90 * dpi / 100)}")
         root.resizable(False, False)
 
         settings_manager = SettingsManager()
