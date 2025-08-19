@@ -4,3 +4,5 @@
 
 This project was originally created for my own personal use, but I’m sharing it in hopes that it might help someone else out there too! 
 Due to my limited brain cells, bugs may appear any where. o((>ω< ))o
+
+## [ **>>Wiki**](https://github.com/Suki8898/SukiTranslate/wiki)
