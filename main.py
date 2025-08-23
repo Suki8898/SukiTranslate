@@ -27,7 +27,349 @@ import collections
 import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
+
+class CustomTitleBar:
+    def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
+        self.parent_window = parent_window
+        self.title = title
+        self.app_ref = app_ref
+        self.show_minimize = show_minimize
+        self.show_maximize = show_maximize
+        self.show_close = show_close
+        self.use_system_titlebar = use_system_titlebar
+        self.allow_resize = allow_resize
+        
+        self.start_x = None
+        self.start_y = None
+        
+        self.resize_mode = None
+        self.resize_start_x = None
+        self.resize_start_y = None
+        self.resize_start_geometry = None
+        
+        if use_system_titlebar:
+            parent_window.title(title)
+            self.title_bar = None
+            self.left_frame = None
+            self.right_frame = None
+            return
+        
+        parent_window.overrideredirect(True)
+        
+        self.title_bar = tk.Frame(parent_window, height=35, relief="flat")
+        self.title_bar.pack(fill="x", side="top")
+        self.title_bar.pack_propagate(False)
+        
+        self.left_frame = tk.Frame(self.title_bar)
+        self.left_frame.pack(side="left", fill="y", padx=5)
+        
+        try:
+            icon_img = Image.open(ICON_DIR)
+            icon_img = icon_img.resize((20, 20), Image.LANCZOS)
+            self.icon_photo = ImageTk.PhotoImage(icon_img)
+            self.icon_label = tk.Label(self.left_frame, image=self.icon_photo)
+            self.icon_label.pack(side="left", padx=(0, 5), pady=7)
+        except:
+            self.icon_label = tk.Label(self.left_frame, text="S", font=("Arial", 12, "bold"))
+            self.icon_label.pack(side="left", padx=(0, 5), pady=7)
+        
+        self.title_label = tk.Label(self.left_frame, text=title, font=("Arial", 9))
+        self.title_label.pack(side="left", pady=10)
+        
+        self.right_frame = tk.Frame(self.title_bar)
+        self.right_frame.pack(side="right", fill="y")
+        
+        button_width = 45
+        button_height = 35
+        
+        if show_close:
+            self.close_button = tk.Button(self.right_frame, text="×", font=("Arial", 14, "bold"),
+                                        width=3, height=1, relief="flat", bd=0,
+                                        command=self.close_window)
+            self.close_button.pack(side="right", fill="y")
+            self.setup_button_hover(self.close_button, "#ff4444")
+        
+        if show_maximize:
+            self.maximize_button = tk.Button(self.right_frame, text="□", font=("Arial", 12),
+                                           width=3, height=1, relief="flat", bd=0,
+                                           command=self.maximize_window)
+            self.maximize_button.pack(side="right", fill="y")
+            self.setup_button_hover(self.maximize_button)
+        
+        if show_minimize:
+            self.minimize_button = tk.Button(self.right_frame, text="─", font=("Arial", 12, "bold"),
+                                           width=3, height=1, relief="flat", bd=0,
+                                           command=self.minimize_window)
+            self.minimize_button.pack(side="right", fill="y")
+            self.setup_button_hover(self.minimize_button)
+        
+        self.bind_drag_events()
+        
+        if self.allow_resize:
+            self.bind_resize_events()
+        
+        if app_ref:
+            self.apply_theme(app_ref.theme_values if hasattr(app_ref, 'theme_values') else self.get_default_theme())
+    
+    def get_default_theme(self):
+        return {
+            'bg_color': '#f0f0f0',
+            'fg_color': '#000000',
+            'active_bg': '#e0e0e0'
+        }
+    
+    def setup_button_hover(self, button, hover_color=None):
+        if not hover_color:
+            if self.app_ref and hasattr(self.app_ref, 'theme_values'):
+                hover_color = self.app_ref.theme_values.get('active_bg', '#e0e0e0')
+            else:
+                hover_color = '#e0e0e0'
+        
+        original_color = button.cget('bg')
+        
+        def on_enter(event):
+            button.configure(bg=hover_color)
+        
+        def on_leave(event):
+            if self.app_ref and hasattr(self.app_ref, 'theme_values'):
+                button.configure(bg=self.app_ref.theme_values.get('bg_color', original_color))
+            else:
+                button.configure(bg=original_color)
+        
+        button.bind("<Enter>", on_enter)
+        button.bind("<Leave>", on_leave)
+    
+    def bind_drag_events(self):
+        widgets_to_bind = [self.title_bar, self.left_frame, self.icon_label, self.title_label]
+        
+        for widget in widgets_to_bind:
+            widget.bind("<Button-1>", self.start_drag)
+            widget.bind("<B1-Motion>", self.drag_window)
+    
+    def bind_resize_events(self):
+        self.parent_window.bind("<Motion>", self.on_mouse_motion)
+        self.parent_window.bind("<Button-1>", self.on_mouse_click)
+        self.parent_window.bind("<B1-Motion>", self.on_mouse_drag)
+        self.parent_window.bind("<ButtonRelease-1>", self.on_mouse_release)
+    
+    def on_mouse_motion(self, event):
+        if self.use_system_titlebar:
+            return
+            
+        x, y = event.x_root - self.parent_window.winfo_rootx(), event.y_root - self.parent_window.winfo_rooty()
+        width, height = self.parent_window.winfo_width(), self.parent_window.winfo_height()
+        
+        resize_border = 10
+        
+        if x <= resize_border and y <= resize_border:
+            self.parent_window.config(cursor="top_left_corner")
+            self.resize_mode = "nw"
+        elif x >= width - resize_border and y <= resize_border:
+            self.parent_window.config(cursor="top_right_corner")
+            self.resize_mode = "ne"
+        elif x <= resize_border and y >= height - resize_border:
+            self.parent_window.config(cursor="bottom_left_corner")
+            self.resize_mode = "sw"
+        elif x >= width - resize_border and y >= height - resize_border:
+            self.parent_window.config(cursor="bottom_right_corner")
+            self.resize_mode = "se"
+        elif x <= resize_border:
+            self.parent_window.config(cursor="left_side")
+            self.resize_mode = "w"
+        elif x >= width - resize_border:
+            self.parent_window.config(cursor="right_side")
+            self.resize_mode = "e"
+        elif y <= resize_border:
+            self.parent_window.config(cursor="top_side")
+            self.resize_mode = "n"
+        elif y >= height - resize_border:
+            self.parent_window.config(cursor="bottom_side")
+            self.resize_mode = "s"
+        else:
+            self.parent_window.config(cursor="")
+            self.resize_mode = None
+    
+    def on_mouse_click(self, event):
+        if self.resize_mode:
+            self.resize_start_x = event.x_root
+            self.resize_start_y = event.y_root
+            self.resize_start_geometry = self.parent_window.geometry()
+            return "break"
+        return None
+    
+    def on_mouse_drag(self, event):
+        if self.resize_mode and self.resize_start_x is not None:
+            dx = event.x_root - self.resize_start_x
+            dy = event.y_root - self.resize_start_y
+            
+            geometry = self.resize_start_geometry
+            parts = geometry.split('+')
+            if len(parts) == 3:
+                size_part = parts[0]
+                x_pos = int(parts[1])
+                y_pos = int(parts[2])
+            else:
+                parts = geometry.split('-')
+                size_part = parts[0]
+                x_pos = -int(parts[1]) if len(parts) > 1 else 0
+                y_pos = -int(parts[2]) if len(parts) > 2 else 0
+            
+            width, height = map(int, size_part.split('x'))
+            
+            new_width = width
+            new_height = height
+            new_x = x_pos
+            new_y = y_pos
+            
+            if 'e' in self.resize_mode:
+                new_width = max(200, width + dx)
+            if 'w' in self.resize_mode:
+                new_width = max(200, width - dx)
+                new_x = x_pos + dx
+            if 's' in self.resize_mode:
+                new_height = max(100, height + dy)
+            if 'n' in self.resize_mode:
+                new_height = max(100, height - dy)
+                new_y = y_pos + dy
+            
+            self.parent_window.geometry(f"{new_width}x{new_height}+{new_x}+{new_y}")
+            return "break"
+        return None
+    
+    def on_mouse_release(self, event):
+        if self.resize_mode:
+            self.resize_mode = None
+            self.resize_start_x = None
+            self.resize_start_y = None
+            self.resize_start_geometry = None
+            self.parent_window.config(cursor="")
+            return "break"
+        return None
+    
+    def start_drag(self, event):
+        if not self.resize_mode:
+            self.start_x = event.x_root
+            self.start_y = event.y_root
+    
+    def drag_window(self, event):
+        if not self.resize_mode and self.start_x is not None and self.start_y is not None:
+            delta_x = event.x_root - self.start_x
+            delta_y = event.y_root - self.start_y
+            
+            new_x = self.parent_window.winfo_x() + delta_x
+            new_y = self.parent_window.winfo_y() + delta_y
+            
+            self.parent_window.geometry(f"+{new_x}+{new_y}")
+            
+            self.start_x = event.x_root
+            self.start_y = event.y_root
+    
+    def minimize_window(self):
+        if self.app_ref and hasattr(self.app_ref, 'root') and self.parent_window == self.app_ref.root:
+            self.parent_window.withdraw()
+            if not self.app_ref.tray_icon or not getattr(self.app_ref, '_tray_thread_started', False):
+                self.app_ref.system_tray_icon()
+        else:
+            self.parent_window.withdraw()
+    
+    def maximize_window(self):
+        if hasattr(self.parent_window, '_is_maximized') and self.parent_window._is_maximized:
+            if hasattr(self.parent_window, '_normal_geometry'):
+                self.parent_window.geometry(self.parent_window._normal_geometry)
+            self.parent_window._is_maximized = False
+            self.maximize_button.configure(text="□")
+        else:
+            self.parent_window._normal_geometry = self.parent_window.geometry()
+            screen_width = self.parent_window.winfo_screenwidth()
+            screen_height = self.parent_window.winfo_screenheight()
+            self.parent_window.geometry(f"{screen_width}x{screen_height}+0+0")
+            self.parent_window._is_maximized = True
+            self.maximize_button.configure(text="❐")
+    
+    def close_window(self):
+        if self.app_ref and hasattr(self.app_ref, 'root') and self.parent_window == self.app_ref.root:
+            if self.app_ref.settings.get("minimize_to_tray", False):
+                self.parent_window.withdraw()
+                if not self.app_ref.tray_icon or not getattr(self.app_ref, '_tray_thread_started', False):
+                    self.app_ref.system_tray_icon()
+            else:
+                self.app_ref.quit_application()
+        else:
+            if hasattr(self.parent_window, '_window_close_handler'):
+                self.parent_window._window_close_handler()
+            else:
+                self.cleanup()
+                self.parent_window.destroy()
+    
+    def apply_theme(self, theme_values):
+        """Apply theme to the title bar and its components"""
+        try:
+            if self.use_system_titlebar:
+                return
+                
+            if self.is_destroyed():
+                return
+                
+            bg_color = theme_values.get('bg_color', '#f0f0f0')
+            fg_color = theme_values.get('fg_color', '#000000')
+            active_bg = theme_values.get('active_bg', '#e0e0e0')
+            
+            if self.title_bar.winfo_exists():
+                self.title_bar.configure(bg=bg_color)
+            if self.left_frame.winfo_exists():
+                self.left_frame.configure(bg=bg_color)
+            if self.right_frame.winfo_exists():
+                self.right_frame.configure(bg=bg_color)
+            
+            if self.icon_label.winfo_exists():
+                self.icon_label.configure(bg=bg_color, fg=fg_color)
+            if self.title_label.winfo_exists():
+                self.title_label.configure(bg=bg_color, fg=fg_color)
+            
+            if hasattr(self, 'minimize_button') and self.minimize_button.winfo_exists():
+                self.minimize_button.configure(bg=bg_color, fg=fg_color, activebackground=active_bg)
+            if hasattr(self, 'maximize_button') and self.maximize_button.winfo_exists():
+                self.maximize_button.configure(bg=bg_color, fg=fg_color, activebackground=active_bg)
+            if hasattr(self, 'close_button') and self.close_button.winfo_exists():
+                self.close_button.configure(bg=bg_color, fg=fg_color, activebackground="#ff4444")
+        except tk.TclError:
+            pass
+    
+    def cleanup(self):
+        """Mark this title bar as destroyed and clean up references"""
+        self._destroyed = True
+        
+        if self.use_system_titlebar:
+            return
+            
+        self.title_bar = None
+        self.left_frame = None
+        self.right_frame = None
+        self.icon_label = None
+        self.title_label = None
+        if hasattr(self, 'minimize_button'):
+            self.minimize_button = None
+        if hasattr(self, 'maximize_button'):
+            self.maximize_button = None
+        if hasattr(self, 'close_button'):
+            self.close_button = None
+    
+    def is_destroyed(self):
+        """Check if this title bar has been destroyed"""
+        if getattr(self, '_destroyed', False):
+            return True
+            
+        if self.use_system_titlebar:
+            try:
+                return self.parent_window is None or not self.parent_window.winfo_exists()
+            except (tk.TclError, AttributeError):
+                return True
+                
+        try:
+            return self.parent_window is None or not self.parent_window.winfo_exists()
+        except (tk.TclError, AttributeError):
+            return True
 
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate')
@@ -488,6 +830,7 @@ class SettingsManager:
             "sample_text": "Suki loves boba, naps, and head scratches UwU",
             "minimize_to_tray": False,
             "ocr_mode": "AI",
+            "auto_copy_original_clipboard": False,
             "auto_copy_clipboard": False
         }
         self.settings = self.default_settings.copy()
@@ -555,11 +898,31 @@ class SettingsWindow:
         self.app = app
         self.translator_manager = translator_manager
         self.window = tk.Toplevel(app.root)
-        self.window.title("Settings")
         self.window.update_idletasks()
         dpi_scale = self.window.winfo_fpixels('1i') / 96
-        self.window.geometry(f"{int(500 * dpi_scale * 100 / 100)}x{int(400 * dpi_scale * 100 / 100)}")
-        self.window.iconbitmap(ICON_DIR)
+        self.window.geometry(f"{int(500 * dpi_scale * 96 / 100)}x{int(435 * dpi_scale * 96 / 100)}")
+        self.window.resizable(True, True)
+        
+        self.custom_title_bar = CustomTitleBar(self.window, "Settings - Suki Translate", app_ref=app, show_maximize=True, use_system_titlebar=False)
+        try:
+            self.window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        if hasattr(app, 'custom_title_bars'):
+            app.custom_title_bars.append(self.custom_title_bar)
+        
+        def on_settings_close():
+            if hasattr(app, 'custom_title_bars') and self.custom_title_bar in app.custom_title_bars:
+                app.custom_title_bars.remove(self.custom_title_bar)
+            
+            self.custom_title_bar.cleanup()
+            
+            if hasattr(app, 'on_settings_window_close'):
+                app.on_settings_window_close()
+            else:
+                self.window.destroy()
+        self.window._window_close_handler = on_settings_close
 
         self.notebook = ttk.Notebook(self.window)
         
@@ -634,6 +997,15 @@ class SettingsWindow:
 
         minimize_to_tray_chk.grid(row=3, column=0, sticky="w", padx=10, pady=5)
 
+        self.auto_copy_original_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_original_clipboard", False))
+        self.auto_copy_original_clipboard_chk = ttk.Checkbutton(
+            self.general_frame,
+            text="Auto save Original Text to clipboard (Tesseract)",
+            variable=self.auto_copy_original_clipboard_var,
+            command=self.update_general_settings
+        )
+        self.auto_copy_original_clipboard_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+
         self.auto_copy_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_clipboard", False))
         auto_copy_clipboard_chk = ttk.Checkbutton(
             self.general_frame,
@@ -641,24 +1013,27 @@ class SettingsWindow:
             variable=self.auto_copy_clipboard_var,
             command=self.update_general_settings
         )
-        auto_copy_clipboard_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        auto_copy_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
 
         self.hotkey_var.trace("w", lambda *args: self.update_general_settings())
         self.always_on_top_var.trace("w", lambda *args: self.update_general_settings())
         self.run_at_startup_var.trace("w", lambda *args: self.update_general_settings())
         self.minimize_to_tray_var.trace("w", lambda *args: self.update_general_settings())
+        self.auto_copy_original_clipboard_var.trace("w", lambda *args: self.update_general_settings())
         self.auto_copy_clipboard_var.trace("w", lambda *args: self.update_general_settings())
 
 
         ocr_frame = ttk.Frame(self.general_frame)
-        ocr_frame.grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        ocr_frame.grid(row=6, column=0, sticky="w", padx=10, pady=5)
         ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
         
         self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
         ttk.Radiobutton(ocr_frame, text="Tesseract", variable=self.ocr_mode_var, value="Tesseract").grid(row=0, column=1, sticky="w", padx=5)
         ttk.Radiobutton(ocr_frame, text="AI Recognition", variable=self.ocr_mode_var, value="AI").grid(row=0, column=2, sticky="w", padx=5)
         
-        self.ocr_mode_var.trace("w", lambda *args: self.update_general_settings())
+        self.ocr_mode_var.trace("w", lambda *args: self.update_ocr_mode_dependent_settings())
+        
+        self.update_ocr_mode_dependent_settings()
 
     def start_hotkey_recording(self):
         if not self.recording:
@@ -731,6 +1106,16 @@ class SettingsWindow:
             self.run_at_startup_var.set(not new_value)
             messagebox.showerror("Error", "Could not modify startup settings")
 
+    def update_ocr_mode_dependent_settings(self):
+        self.update_general_settings()
+        
+        ocr_mode = self.ocr_mode_var.get()
+        if ocr_mode == "Tesseract":
+            self.auto_copy_original_clipboard_chk.config(state="normal")
+        else:
+            self.auto_copy_original_clipboard_chk.config(state="disabled")
+            self.auto_copy_original_clipboard_var.set(False)
+
     def update_general_settings(self):
         new_settings = self.app.settings.copy()
         new_settings["hotkey"] = self.hotkey_var.get()
@@ -738,6 +1123,7 @@ class SettingsWindow:
         new_settings["run_at_startup"] = self.run_at_startup_var.get()
         new_settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
         new_settings["ocr_mode"] = self.ocr_mode_var.get()
+        new_settings["auto_copy_original_clipboard"] = self.auto_copy_original_clipboard_var.get()
         new_settings["auto_copy_clipboard"] = self.auto_copy_clipboard_var.get()
         
         self.app.settings_manager.save_settings(new_settings)
@@ -787,6 +1173,8 @@ class SettingsWindow:
         self.app.apply_theme()
         if hasattr(self.app, 'edit_window') and self.app.edit_window and self.app.edit_window.winfo_exists():
             self.app.update_edit_window_theme()
+        
+        self.apply_translator_canvas_theme()
 
     def open_translators_folder(self):
         try:
@@ -924,10 +1312,54 @@ class SettingsWindow:
         max_tokens_entry.grid(row=4, column=1, sticky="w", padx=(0, 5))
 
         ttk.Label(list_frame, text="Translator").grid(row=5, column=0, sticky="w", pady=5)
-        ttk.Label(list_frame, text="API Key").grid(row=5, column=1, sticky="w", pady=5)
+        ttk.Label(list_frame, text="API Key").grid(row=5, column=2, sticky="w", pady=5)
 
+        scrollable_frame = ttk.Frame(list_frame)
+        scrollable_frame.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=5)
+        
+        list_frame.rowconfigure(6, weight=1)
         list_frame.columnconfigure(1, weight=1)
         list_frame.columnconfigure(2, weight=1)
+
+        translators_count = len(self.translator_manager.get_translator_list())
+        max_visible_rows = 8
+        row_height = 25
+        canvas_height = min(translators_count * row_height, max_visible_rows * row_height)
+        
+        self.translator_canvas = tk.Canvas(scrollable_frame, highlightthickness=0, height=canvas_height)
+        self.translator_scrollbar = ttk.Scrollbar(scrollable_frame, orient="vertical", command=self.translator_canvas.yview)
+        self.scrollable_inner_frame = ttk.Frame(self.translator_canvas)
+        
+        self.scrollable_inner_frame.bind(
+            "<Configure>",
+            lambda e: self.translator_canvas.configure(scrollregion=self.translator_canvas.bbox("all"))
+        )
+        
+        self.canvas_frame_id = self.translator_canvas.create_window((0, 0), window=self.scrollable_inner_frame, anchor="nw")
+        self.translator_canvas.configure(yscrollcommand=self.translator_scrollbar.set)
+        
+        self.translator_canvas.pack(side="left", fill="both", expand=True)
+        self.translator_scrollbar.pack(side="right", fill="y")
+        
+        def configure_canvas_width(event):
+            canvas_width = event.width
+            self.translator_canvas.itemconfig(self.canvas_frame_id, width=canvas_width)
+        scrollable_frame.bind("<Configure>", configure_canvas_width)
+        
+        def on_mousewheel(event):
+            self.translator_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def bind_mousewheel(event):
+            self.translator_canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        def unbind_mousewheel(event):
+            self.translator_canvas.unbind_all("<MouseWheel>")
+        
+        self.translator_canvas.bind("<Enter>", bind_mousewheel)
+        self.translator_canvas.bind("<Leave>", unbind_mousewheel)
+        
+        self.scrollable_inner_frame.columnconfigure(1, weight=1)
+        self.scrollable_inner_frame.columnconfigure(2, weight=1)
 
         self.translator_vars = {}
         self.api_key_entries = {}
@@ -936,24 +1368,24 @@ class SettingsWindow:
         translators = self.translator_manager.get_translator_list()
         active_trans_from_settings = self.app.settings.get("active_translator")
         
-        for row_idx, t_name in enumerate(translators, start=6):
+        for row_idx, t_name in enumerate(translators, start=0):
             var = tk.BooleanVar(value=(t_name == active_trans_from_settings))
             chk = ttk.Checkbutton(
-                list_frame,
+                self.scrollable_inner_frame,
                 text=f"{t_name}.js",
                 variable=var,
                 command=lambda n=t_name, v=var: self.on_translator_check(n, v)
             )
-            chk.grid(row=row_idx, column=0, sticky="w", padx=(0, 10))
+            chk.grid(row=row_idx, column=0, sticky="w", padx=(5, 10), pady=2)
             
             api_key_var = tk.StringVar()
             api_key_entry = ttk.Entry(
-                list_frame,
+                self.scrollable_inner_frame,
                 textvariable=api_key_var,
                 show="•",
                 width=20
             )
-            api_key_entry.grid(row=row_idx, column=1, columnspan=2, sticky="ew", padx=(0, 10))
+            api_key_entry.grid(row=row_idx, column=1, columnspan=2, sticky="ew", padx=(0, 10), pady=2)
             
             key_path = os.path.join(TRANSLATORS_DIR, f"{t_name}.js")
             if os.path.exists(key_path):
@@ -990,6 +1422,46 @@ class SettingsWindow:
             self.load_and_set_translator_params(active_trans_from_settings)
         else:
             self.reset_translator_params_ui()
+        
+        self.apply_translator_canvas_theme()
+
+    def apply_translator_canvas_theme(self):
+        """Apply dark mode theming to the translator canvas and scrollbar"""
+        if hasattr(self, 'translator_canvas'):
+            dark_mode = self.app.settings.get("dark_mode", False)
+            
+            style = ttk.Style()
+            
+            if dark_mode:
+                bg_color = "#2e2e2e"
+                scrollbar_bg = "#3c3c3c"
+                scrollbar_trough = "#2e2e2e"
+                scrollbar_arrow = "#ffffff"
+                
+                self.translator_canvas.configure(bg=bg_color)
+                
+                style.configure(
+                    "Translator.Vertical.TScrollbar",
+                    background=scrollbar_bg,
+                    troughcolor=scrollbar_trough,
+                    arrowcolor=scrollbar_arrow,
+                    bordercolor=scrollbar_bg,
+                    lightcolor=scrollbar_bg,
+                    darkcolor=scrollbar_bg
+                )
+                style.map(
+                    "Translator.Vertical.TScrollbar",
+                    background=[("active", "#444444"), ("pressed", "#555555")]
+                )
+                
+                if hasattr(self, 'translator_scrollbar'):
+                    self.translator_scrollbar.configure(style="Translator.Vertical.TScrollbar")
+            else:
+                bg_color = "#ffffff"
+                self.translator_canvas.configure(bg=bg_color)
+                
+                if hasattr(self, 'translator_scrollbar'):
+                    self.translator_scrollbar.configure(style="Vertical.TScrollbar")
 
     def save_active_translator_specific_params(self):
         active_translator = self.translator_manager.active_translator
@@ -1321,9 +1793,7 @@ class SettingsWindow:
 class SukiTranslateApp:
     def __init__(self, root):
         self.root = root
-        self.root.title(APP_NAME)
-        self.root.iconbitmap(ICON_DIR)
-
+        
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         sys.stdout = GlobalTextRedirector()
@@ -1333,6 +1803,10 @@ class SukiTranslateApp:
         self.settings = self.settings_manager.load_settings()
         self.spell_checker = SpellChecker()
         self.apply_theme()
+        
+        self.custom_title_bar = CustomTitleBar(self.root, APP_NAME, app_ref=self, show_maximize=False, allow_resize=False)
+        
+        self.custom_title_bars = [self.custom_title_bar]
 
         self.translator_manager = TranslatorManager()
         
@@ -1427,6 +1901,8 @@ class SukiTranslateApp:
         self.canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         
+        self.apply_theme()
+        
         if self.settings["active_translator"]:
             self.translator_manager.set_active_translator(self.settings["active_translator"])
 
@@ -1441,23 +1917,56 @@ class SukiTranslateApp:
         self.captured_image = None
         self.current_overlay = None
         
+        self.system_tray_icon()
+        
     def system_tray_icon(self):
-        try:
-            image = PILImage.open(ICON_DIR)
-        except:
-            image = PILImage.new('RGB', (64, 64), color='blue')
+        if self.tray_icon and hasattr(self, '_tray_thread_started') and self._tray_thread_started:
+            return
+        
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except:
+                pass
+            self.tray_icon = None
+        
+        if not hasattr(self, '_cached_tray_icon_image'):
+            try:
+                self._cached_tray_icon_image = PILImage.open(ICON_DIR)
+            except:
+                self._cached_tray_icon_image = PILImage.new('RGB', (64, 64), color='blue')
+        
+        image = self._cached_tray_icon_image
 
         menu = (
-            pystray.MenuItem("Show", self.show_window),
-            pystray.MenuItem("Settings", self.open_settings),
-            pystray.MenuItem("Exit", self.quit_application)
+            pystray.MenuItem("Show", self.show_window_from_tray),
+            pystray.MenuItem("Settings", self.open_settings_from_tray),
+            pystray.MenuItem("Exit", self.quit_application_from_tray)
         )
         self.tray_icon = pystray.Icon("SukiTranslate", image, APP_NAME, menu)
+        
+        if not hasattr(self, '_tray_thread_started') or not self._tray_thread_started:
+            def run_tray():
+                try:
+                    self.tray_icon.run()
+                except Exception as e:
+                    print(f"Tray icon error: {e}")
+                finally:
+                    self._tray_thread_started = False
+            
+            threading.Thread(target=run_tray, daemon=True).start()
+            self._tray_thread_started = True
+
+    def show_window_from_tray(self):
+        self.root.after(1, self.show_window)
+
+    def open_settings_from_tray(self):
+        self.root.after(1, self.open_settings)
+
+    def quit_application_from_tray(self):
+        self.root.after(1, self.quit_application)
 
     def show_window(self):
-        if self.tray_icon:
-            self.tray_icon.stop()
-            self.tray_icon = None
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -1469,8 +1978,14 @@ class SukiTranslateApp:
             sys.stderr = self.original_stderr
         
         if self.tray_icon:
-            self.tray_icon.stop()
+            try:
+                self.tray_icon.stop()
+            except:
+                pass
             self.tray_icon = None
+        
+        if hasattr(self, '_tray_thread_started'):
+            self._tray_thread_started = False
         
         if os.path.exists(LOCK_FILE):
             try:
@@ -1513,17 +2028,46 @@ class SukiTranslateApp:
 
     def toggle_console(self):
         if self.console_visible and self.console_window and self.console_window.winfo_exists():
-            self.on_console_close()
+            try:
+                window_state = self.console_window.state()
+                if window_state == 'withdrawn':
+                    self.console_window.deiconify()
+                    self.console_window.lift()
+                    self.console_window.focus_force()
+                    return
+                else:
+                    self.on_console_close()
+            except tk.TclError:
+                self.on_console_close()
+                self.show_console()
         else:
             self.show_console()
     
     def show_console(self):
         self.console_window = tk.Toplevel(self.root)
-        self.console_window.iconbitmap(ICON_DIR)
-        self.console_window.title("Console Log")
         self.console_window.geometry("600x400")
-        self.console_window.attributes('-topmost', True)
-        self.console_window.configure(bg="#1E1E1E")
+        self.console_window.resizable(True, True)
+        
+        self.console_title_bar = CustomTitleBar(self.console_window, "Console Log - Suki Translate", app_ref=self, show_maximize=True, use_system_titlebar=False)
+        try:
+            self.console_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        if hasattr(self, 'custom_title_bars'):
+            self.custom_title_bars.append(self.console_title_bar)
+        
+        def on_console_close():
+            if hasattr(self, 'custom_title_bars') and hasattr(self, 'console_title_bar') and self.console_title_bar in self.custom_title_bars:
+                self.custom_title_bars.remove(self.console_title_bar)
+            
+            if hasattr(self, 'console_title_bar'):
+                self.console_title_bar.cleanup()
+            
+            self.on_console_close()
+        self.console_window._window_close_handler = on_console_close
+        
+        self.console_window.configure(bg=self.theme_values.get('bg_color', '#1E1E1E'))
 
         console_style = ttk.Style()
         console_style.configure(
@@ -1662,6 +2206,23 @@ class SukiTranslateApp:
             self.root.option_add('*TCombobox*Listbox.foreground', fg_color)
             self.root.option_add('*TCombobox*Listbox.selectBackground', active_bg)
             self.root.option_add('*TCombobox*Listbox.selectForeground', fg_color)
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.background', '#3c3c3c')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.troughColor', '#2e2e2e')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeBackground', '#444444')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightBackground', '#2e2e2e')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.borderWidth', '0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.selectBackground', '#444444')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.foreground', '#ffffff')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeForeground', '#ffffff')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.relief', 'flat')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightThickness', '0')
+            self.root.option_add('*Scrollbar.background', '#3c3c3c')
+            self.root.option_add('*Scrollbar.troughColor', '#2e2e2e')
+            self.root.option_add('*Scrollbar.activeBackground', '#444444')
+            self.root.option_add('*Scrollbar.foreground', '#ffffff')
+            self.root.option_add('*Scrollbar.activeForeground', '#ffffff')
+            self.root.option_add('*Scrollbar.relief', 'flat')
+            self.root.option_add('*Scrollbar.borderWidth', '0')
             style.map('TSpinbox',
                 fieldbackground=[('readonly', entry_bg), ('active', active_bg)],
                 background=[('readonly', entry_bg), ('active', active_bg)],
@@ -1701,6 +2262,16 @@ class SukiTranslateApp:
             self.root.option_add('*TCombobox*Listbox.foreground', fg_color)
             self.root.option_add('*TCombobox*Listbox.selectBackground', active_bg)
             self.root.option_add('*TCombobox*Listbox.selectForeground', fg_color)
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.background', '#e1e1e1')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.troughColor', '#f0f0f0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeBackground', '#d0d0d0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightBackground', '#f0f0f0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.borderWidth', '0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.selectBackground', '#d0d0d0')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.foreground', '#000000')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeForeground', '#000000')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.relief', 'flat')
+            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightThickness', '0')
             style.map('TSpinbox',
                 fieldbackground=[('readonly', '#3c3c3c'), ('active', '#444444')],
                 background=[('readonly', '#3c3c3c'), ('active', '#444444')],
@@ -1772,26 +2343,50 @@ class SukiTranslateApp:
                         widget.configure(bg=bg_color, fg=fg_color)
                 except:
                     pass
+        
+        if hasattr(self, 'canvas'):
+            self.canvas.configure(bg=bg_color)
+        
+        if hasattr(self, 'custom_title_bars'):
+            self.custom_title_bars = [tb for tb in self.custom_title_bars if tb is not None and not tb.is_destroyed()]
+            for title_bar in self.custom_title_bars.copy():
+                try:
+                    if title_bar and not title_bar.is_destroyed():
+                        title_bar.apply_theme(self.theme_values)
+                    else:
+                        if title_bar in self.custom_title_bars:
+                            self.custom_title_bars.remove(title_bar)
+                except (tk.TclError, AttributeError):
+                    if title_bar in self.custom_title_bars:
+                        self.custom_title_bars.remove(title_bar)
 
     def open_settings(self):
         if hasattr(self, "settings_window"):
             if self.settings_window and self.settings_window.window.winfo_exists():
-                self.settings_window.window.lift()
-                self.settings_window.window.focus_force()
-                return
+                try:
+                    window_state = self.settings_window.window.state()
+                    if window_state == 'withdrawn':
+                        self.settings_window.window.deiconify()
+                    self.settings_window.window.lift()
+                    self.settings_window.window.focus_force()
+                    return
+                except tk.TclError:
+                    del self.settings_window
             else:
                 del self.settings_window
 
         self.settings_window = SettingsWindow(self, self.translator_manager, self.spell_checker)
         self.settings_window.window.protocol("WM_DELETE_WINDOW", self.on_settings_window_close)
-        self.root.wait_window(self.settings_window.window)
 
     def on_settings_window_close(self):
         if hasattr(self, "settings_window"):
             self.settings_window.window.destroy()
             if self.root.winfo_exists():
                 self.settings = self.settings_manager.load_settings()
-                self.apply_theme()
+                try:
+                    self.apply_theme()
+                except tk.TclError:
+                    pass
 
     def start_capture(self):
         self.is_selecting = True
@@ -1835,12 +2430,32 @@ class SukiTranslateApp:
         self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
+        
+        self.overlay.bind("<Escape>", self.cancel_capture)
+        self.overlay_canvas.bind("<Key>", self.on_key_press)
+        
+        self.overlay.focus_force()
+        self.overlay_canvas.focus_set()
+        self.overlay_canvas.config(takefocus=True)
+        
+        self.overlay.after(100, self._set_focus_with_delay)
+
+    def _set_focus_with_delay(self):
+        """Set focus to overlay after a small delay to ensure proper keyboard capture"""
+        if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+            self.overlay.focus_force()
+            self.overlay_canvas.focus_force()
+            try:
+                self.overlay.grab_set()
+            except tk.TclError:
+                pass
 
     def cancel_capture(self, event=None):
         if self.is_selecting:
             self.is_selecting = False
             if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
                 try:
+                    self.overlay.grab_release()
                     self.overlay.destroy()
                 except tk.TclError:
                     pass
@@ -1848,6 +2463,12 @@ class SukiTranslateApp:
             
         self.x1 = self.y1 = self.x2 = self.y2 = None
         self.rect = None
+
+    def on_key_press(self, event):
+        """Handle key press events in crop mode"""
+        if event.keysym == "Escape":
+            self.cancel_capture(event)
+        return "break"
 
     def on_mouse_down(self, event):
         if self.is_selecting:
@@ -1942,6 +2563,13 @@ class SukiTranslateApp:
 
                 self.translated_input_text = extracted_text
                 print(f"--- Extracted OCR Text -----------------------------------------------\n{extracted_text}")
+
+                if self.settings.get("auto_copy_original_clipboard", False):
+                    try:
+                        copy_original_text(extracted_text)
+                        print("Auto-copied original OCR text to clipboard.")
+                    except Exception as clipboard_error:
+                        print(f"Error auto-copying original text to clipboard: {clipboard_error}")
 
                 translated_text = self.translate_with_api(
                     extracted_text,
@@ -2108,13 +2736,17 @@ class SukiTranslateApp:
             overlay.withdraw()
             overlay.attributes('-topmost', True)
             overlay.configure(bg=bg_color)
+            
+            overlay.geometry("1x1-10000-10000")
 
             display_mode = self.settings.get("display_mode")
-            font_name = self.settings.get("result_font", "Arial")
             font_path = find_font_path(font_name)
             if font_path is None:
                 font_path = "arial.ttf"
-                print(f"Font {font_name} not found, using arial.ttf")            
+                print(f"Font {font_name} not found, using arial.ttf")
+            
+            final_width = capture_width
+            final_height = capture_height            
            
             if display_mode == "blur":
                 img_pil = self.captured_image.convert("RGB")
@@ -2157,9 +2789,8 @@ class SukiTranslateApp:
                 self.tk_img = ImageTk.PhotoImage(inpainted_img_pil)
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
-
-                overlay.geometry(f"{capture_width}x{capture_height}+{self.x1}+{self.y1}")
-                overlay.deiconify()
+                final_width = capture_width
+                final_height = capture_height
 
 
             elif display_mode == "auto":
@@ -2204,10 +2835,10 @@ class SukiTranslateApp:
                     y += font.size
 
                 self.tk_img = ImageTk.PhotoImage(bg_pil)
-
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
-                overlay.geometry(f"{width}x{height}+{self.x1}+{self.y1}")
+                final_width = width
+                final_height = height
 
             else:  # manual
                 label = tk.Label(
@@ -2221,14 +2852,15 @@ class SukiTranslateApp:
                     padx=10,
                     pady=10
                 )
-                required_height = label.winfo_reqheight()
-                overlay.geometry(f"{capture_width}x{required_height}+{self.x1}+{self.y1}")
-
-            label.pack()
-            label.update_idletasks()
-
+                label.pack()
+                overlay.update_idletasks()
+                final_height = label.winfo_reqheight()
+                final_width = capture_width
+                label.pack_forget()
             label.pack(fill="both", expand=True)
-            overlay.focus_force()
+            overlay.update_idletasks()
+            
+            overlay.geometry(f"{final_width}x{final_height}+{self.x1}+{self.y1}")
 
             context_menu = tk.Menu(overlay, tearoff=0)
             is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
@@ -2251,15 +2883,33 @@ class SukiTranslateApp:
                 state="disabled" if is_ai_mode else "normal"
             )
 
-            def show_context_menu(event): context_menu.post(event.x_root, event.y_root)
+            def show_context_menu(event): 
+                context_menu.post(event.x_root, event.y_root)
+                return "break"
             overlay.bind("<Button-3>", show_context_menu)
 
-            def close_overlay(event=None): overlay.destroy()
+            def close_overlay(event=None): 
+                if hasattr(self, '_mouse_hook_id') and self._mouse_hook_id:
+                    try:
+                        import win32gui
+                        win32api.UnhookWindowsHookEx(self._mouse_hook_id)
+                        self._mouse_hook_id = None
+                        print("Global mouse hook removed")
+                    except Exception as e:
+                        print(f"Error removing mouse hook: {e}")
+                overlay.destroy()
+                
             overlay.bind("<Escape>", close_overlay)
-            overlay.bind("<FocusOut>", close_overlay)
             overlay.bind("<Button-1>", close_overlay)
+            label.bind("<Button-1>", close_overlay)
+            overlay.bind("<FocusOut>", close_overlay)
 
             overlay.deiconify()
+            
+            overlay.focus_force()
+            overlay.lift()
+            overlay.attributes('-topmost', True)
+            
             self.current_overlay = overlay
 
         except Exception as e:
@@ -2268,12 +2918,21 @@ class SukiTranslateApp:
 
     def open_edit_window(self):
         edit_window = tk.Toplevel(self.root)
-        edit_window.title("Edit and Translate")
-        edit_window.iconbitmap(ICON_DIR)
         edit_window.update_idletasks()
         dpi_scale = edit_window.winfo_fpixels('1i') / 96.0
-        edit_window.geometry(f"{int(600 * dpi_scale * 100 / 100)}x{int(600 * dpi_scale * 100 / 100)}")
+        edit_window.geometry(f"{int(600 * dpi_scale * 96 / 100)}x{int(600 * dpi_scale * 96 / 100)}")
         edit_window.resizable(True, True)
+        
+        self.edit_custom_title_bar = CustomTitleBar(edit_window, "Edit and Translate - Suki Translate", app_ref=self, show_maximize=True, use_system_titlebar=False)
+        try:
+            edit_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        if hasattr(self, 'custom_title_bars'):
+            self.custom_title_bars.append(self.edit_custom_title_bar)
+        
+        self.edit_custom_title_bar.apply_theme(self.theme_values)
 
         self.apply_theme()
         theme = self.theme_values
@@ -2359,11 +3018,18 @@ class SukiTranslateApp:
         edit_window.focus_force()
 
         def on_edit_window_close():
+            if hasattr(self, 'custom_title_bars') and hasattr(self, 'edit_custom_title_bar') and self.edit_custom_title_bar in self.custom_title_bars:
+                self.custom_title_bars.remove(self.edit_custom_title_bar)
+            
+            if hasattr(self, 'edit_custom_title_bar'):
+                self.edit_custom_title_bar.cleanup()
+            
             self.edit_window = None
             self.edit_window_widgets = None
             edit_window.destroy()
 
         edit_window.protocol("WM_DELETE_WINDOW", on_edit_window_close)
+        edit_window._window_close_handler = on_edit_window_close
 
     def update_edit_window_theme(self):
         if not hasattr(self, 'edit_window') or not self.edit_window or not self.edit_window.winfo_exists():
@@ -2436,7 +3102,7 @@ if __name__ == "__main__":
         app = SukiTranslateApp(root)
         root.update_idletasks()
         dpi = root.winfo_fpixels('1i') 
-        root.geometry(f"{int(315 * dpi / 96)}x{int(90 * dpi / 100)}")
+        root.geometry(f"{int(315 * dpi / 96)}x{int(125 * dpi / 100)}")
         root.resizable(False, False)
 
         settings_manager = SettingsManager()
@@ -2444,14 +3110,12 @@ if __name__ == "__main__":
         if settings.get("run_at_startup", False) and settings.get("minimize_to_tray", False):
             root.withdraw()
             app.system_tray_icon()
-            threading.Thread(target=app.tray_icon.run, daemon=True).start()
             
         def on_closing():
             if app.settings.get("minimize_to_tray", False):
                 app.root.withdraw()
-                if not app.tray_icon:
+                if not app.tray_icon or not getattr(app, '_tray_thread_started', False):
                     app.system_tray_icon()
-                    threading.Thread(target=app.tray_icon.run, daemon=True).start()
             else:
                 app.quit_application()
         
