@@ -27,7 +27,7 @@ import collections
 import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -2977,6 +2977,8 @@ class SukiTranslateApp:
            
             if display_mode == "blur":
                 img_pil = self.captured_image.convert("RGB")
+                # Resize captured image to match crop dimensions
+                img_pil = img_pil.resize((capture_width, capture_height), Image.LANCZOS)
                 img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
                 img_cv2 = cv2.GaussianBlur(img_cv2, (55, 55), 0)
 
@@ -3018,10 +3020,13 @@ class SukiTranslateApp:
                 label.image = self.tk_img
                 final_width = capture_width
                 final_height = capture_height
+                print(f"Blur mode: final dimensions {final_width}x{final_height} match crop area")
 
 
             elif display_mode == "auto":
                 img_pil = self.captured_image.convert("RGB")
+                # Resize captured image to match crop dimensions
+                img_pil = img_pil.resize((capture_width, capture_height), Image.LANCZOS)
                 img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
                 height, width, _ = img_cv2.shape
 
@@ -3041,10 +3046,10 @@ class SukiTranslateApp:
                         font = ImageFont.truetype(font_path, current_font_size)
                     except:
                         font = ImageFont.load_default()
-                    lines = wrap_text(text, font, width - 20)
+                    lines = wrap_text(text, font, capture_width - 20)
                     total_text_height = len(lines) * font.size
 
-                    if total_text_height <= height:
+                    if total_text_height <= capture_height:
                         break
                     else:
                         current_font_size -= 1
@@ -3052,20 +3057,21 @@ class SukiTranslateApp:
                             break
 
                 total_text_height = len(lines) * font.size
-                y = (height - total_text_height) / 2
+                y = (capture_height - total_text_height) / 2
 
                 for line in lines:
                     bbox = draw.textbbox((0,0), line, font=font)
                     text_width = bbox[2] - bbox[0]
-                    x = (width - text_width) / 2
+                    x = (capture_width - text_width) / 2
                     draw.text((x, y), line, font=font, fill=font_color)
                     y += font.size
 
                 self.tk_img = ImageTk.PhotoImage(bg_pil)
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
-                final_width = width
-                final_height = height
+                final_width = capture_width
+                final_height = capture_height
+                print(f"Auto mode: final dimensions {final_width}x{final_height} match crop area")
 
             else:
                 label = tk.Label(
@@ -3087,8 +3093,17 @@ class SukiTranslateApp:
             label.pack(fill="both", expand=True)
             overlay.update_idletasks()
             
-            final_width = max(100, final_width)
-            final_height = max(50, final_height)
+            # Apply minimum size constraints only for manual mode
+            # For blur and auto modes, preserve exact crop dimensions
+            display_mode = self.settings.get("display_mode")
+            if display_mode not in ["blur", "auto"]:
+                final_width = max(100, final_width)
+                final_height = max(50, final_height)
+            else:
+                # For blur and auto modes, ensure the window matches crop area exactly
+                # Only apply minimal constraints to prevent zero-size windows
+                final_width = max(1, final_width)
+                final_height = max(1, final_height)
             
             screen_width = overlay.winfo_screenwidth()
             screen_height = overlay.winfo_screenheight()
@@ -3096,6 +3111,7 @@ class SukiTranslateApp:
             overlay_x = max(0, min(overlay_x, screen_width - final_width))
             overlay_y = max(0, min(overlay_y, screen_height - final_height))
             
+            print(f"Final overlay geometry: {final_width}x{final_height}+{overlay_x}+{overlay_y} (mode: {display_mode})")
             overlay.geometry(f"{final_width}x{final_height}+{overlay_x}+{overlay_y}")
 
             context_menu = tk.Menu(overlay, tearoff=0)
