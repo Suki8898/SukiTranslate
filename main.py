@@ -27,7 +27,7 @@ import collections
 import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -2735,6 +2735,11 @@ class SukiTranslateApp:
         y1p = max(0, min(y1p, ih))
         y2p = max(0, min(y2p, ih))
 
+        self.x1 = x1p
+        self.y1 = y1p
+        self.x2 = x2p
+        self.y2 = y2p
+
         self.captured_image = self.full_screen_img.crop((x1p, y1p, x2p, y2p))
 
         threading.Thread(target=self.perform_translation).start()
@@ -2934,8 +2939,19 @@ class SukiTranslateApp:
             if self.current_overlay is not None and self.current_overlay.winfo_exists():
                 self.current_overlay.destroy()
 
-            capture_width = self.x2 - self.x1
-            capture_height = self.y2 - self.y1
+            capture_width = abs(self.x2 - self.x1)
+            capture_height = abs(self.y2 - self.y1)
+            
+            print(f"Original coordinates: x1={self.x1}, y1={self.y1}, x2={self.x2}, y2={self.y2}")
+            print(f"Calculated dimensions: width={capture_width}, height={capture_height}")
+            
+            capture_width = max(100, capture_width)
+            capture_height = max(50, capture_height)
+            
+            overlay_x = min(self.x1, self.x2)
+            overlay_y = min(self.y1, self.y2)
+            
+            print(f"Overlay position: x={overlay_x}, y={overlay_y}")
 
             font_name = self.settings.get("result_font", "Arial")
             font_size = self.settings.get("result_font_size", 12)
@@ -3071,7 +3087,16 @@ class SukiTranslateApp:
             label.pack(fill="both", expand=True)
             overlay.update_idletasks()
             
-            overlay.geometry(f"{final_width}x{final_height}+{self.x1}+{self.y1}")
+            final_width = max(100, final_width)
+            final_height = max(50, final_height)
+            
+            screen_width = overlay.winfo_screenwidth()
+            screen_height = overlay.winfo_screenheight()
+            
+            overlay_x = max(0, min(overlay_x, screen_width - final_width))
+            overlay_y = max(0, min(overlay_y, screen_height - final_height))
+            
+            overlay.geometry(f"{final_width}x{final_height}+{overlay_x}+{overlay_y}")
 
             context_menu = tk.Menu(overlay, tearoff=0)
             is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
