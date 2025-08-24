@@ -27,7 +27,7 @@ import collections
 import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -303,7 +303,7 @@ class CustomTitleBar:
                 self.parent_window.destroy()
     
     def apply_theme(self, theme_values):
-        """Apply theme to the title bar and its components"""
+
         try:
             if self.use_system_titlebar:
                 return
@@ -337,7 +337,7 @@ class CustomTitleBar:
             pass
     
     def cleanup(self):
-        """Mark this title bar as destroyed and clean up references"""
+
         self._destroyed = True
         
         if self.use_system_titlebar:
@@ -356,7 +356,7 @@ class CustomTitleBar:
             self.close_button = None
     
     def is_destroyed(self):
-        """Check if this title bar has been destroyed"""
+
         if getattr(self, '_destroyed', False):
             return True
             
@@ -1426,7 +1426,7 @@ class SettingsWindow:
         self.apply_translator_canvas_theme()
 
     def apply_translator_canvas_theme(self):
-        """Apply dark mode theming to the translator canvas and scrollbar"""
+
         if hasattr(self, 'translator_canvas'):
             dark_mode = self.app.settings.get("dark_mode", False)
             
@@ -1998,10 +1998,28 @@ class SukiTranslateApp:
         self.unbind_global_hotkey()
         hotkey = self.settings.get("hotkey", "Ctrl+Q")
         try:
+            
             keyboard.add_hotkey(hotkey.lower(), self.start_capture)
             self.current_hotkey = hotkey
+            
+            
+            keyboard.add_hotkey('ctrl+shift+esc', self.emergency_exit_crop_mode)
+            
+            
+            keyboard.add_hotkey('ctrl+alt+q', self.emergency_exit_crop_mode)
+            
+            print(f"Global hotkeys bound: {hotkey} (capture), Ctrl+Shift+Esc (emergency exit), Ctrl+Alt+Q (emergency exit)")
         except Exception as e:
             print(f"Error setting global hotkey: {e}")
+    
+    def emergency_exit_crop_mode(self):
+
+        print("EMERGENCY EXIT: Global hotkey triggered - exiting crop mode only (application stays running)")
+        if hasattr(self, 'is_selecting') and self.is_selecting:
+            print("Crop mode detected - forcing exit from crop mode")
+            self.cancel_capture()
+        else:
+            print("No active crop mode detected - application continues running normally")
 
     def unbind_global_hotkey(self):
         try:
@@ -2389,86 +2407,279 @@ class SukiTranslateApp:
                     pass
 
     def start_capture(self):
-        self.is_selecting = True
+
+        print("Starting capture...")
+        
+        
+        if hasattr(self, 'overlay') and self.overlay:
+            print("Existing overlay detected - canceling first")
+            self.cancel_capture()
+            
+        
+        if self.is_selecting:
+            print("Warning: is_selecting was already True - resetting")
+            self.is_selecting = False
+            
+        
         self.x1 = self.y1 = self.x2 = self.y2 = None
+        self.rect = None
+        
+        
+        self.is_selecting = True
         self.root.after(100, self.create_overlay)
         
     def create_overlay(self):
-        if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
-            self.overlay.destroy()
 
-        with mss.mss() as sct:
-            monitor = sct.monitors[0]
-            mon_w, mon_h = monitor["width"], monitor["height"]
-
-            self.full_screen_img = Image.frombytes("RGB", (mon_w, mon_h), sct.grab(monitor).bgra, "raw", "BGRX" )
-
-        self.overlay = tk.Toplevel(self.root)
-        self.overlay.overrideredirect(True)
-        self.overlay.geometry(f"{mon_w}x{mon_h}+0+0")
-        self.overlay.lift()
-        self.overlay.attributes('-topmost', True)
-        self.overlay.config(cursor='crosshair')
-
-        scr_w = self.root.winfo_screenwidth()
-        scr_h = self.root.winfo_screenheight()
-        self.scale_x = mon_w / scr_w
-        self.scale_y = mon_h / scr_h
-
-        self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
-        self.overlay_canvas = tk.Canvas(self.overlay, width=mon_w, height=mon_h, highlightthickness=0)
-        self.overlay_canvas.place(x=0, y=0, width=mon_w, height=mon_h)
-        self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
-
-        border_thickness = 3
-        self.overlay_canvas.create_rectangle(0, 0, mon_w, border_thickness, fill="white", width=0)
-        self.overlay_canvas.create_rectangle(0, mon_h - border_thickness, mon_w, mon_h, fill="white", width=0)
-        self.overlay_canvas.create_rectangle(0, 0, border_thickness, mon_h, fill="white", width=0)
-        self.overlay_canvas.create_rectangle(mon_w - border_thickness, 0, mon_w, mon_h, fill="white", width=0)
-
-        self.overlay_canvas.bind("<ButtonPress-1>", self.on_mouse_down)
-        self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
-        self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
-        self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
+        print("Creating overlay...")
         
-        self.overlay.bind("<Escape>", self.cancel_capture)
-        self.overlay_canvas.bind("<Key>", self.on_key_press)
-        
-        self.overlay.focus_force()
-        self.overlay_canvas.focus_set()
-        self.overlay_canvas.config(takefocus=True)
-        
-        self.overlay.after(100, self._set_focus_with_delay)
+        try:
+            
+            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+                print("Destroying existing overlay")
+                self.overlay.destroy()
+
+            
+            try:
+                with mss.mss() as sct:
+                    monitor = sct.monitors[0]
+                    mon_w, mon_h = monitor["width"], monitor["height"]
+                    print(f"Monitor size: {mon_w}x{mon_h}")
+                    
+                    self.full_screen_img = Image.frombytes("RGB", (mon_w, mon_h), sct.grab(monitor).bgra, "raw", "BGRX")
+                    print("Screen captured successfully")
+            except Exception as e:
+                print(f"Error capturing screen: {e}")
+                self.cancel_capture()
+                return
+
+            
+            try:
+                self.overlay = tk.Toplevel(self.root)
+                self.overlay.overrideredirect(True)
+                self.overlay.geometry(f"{mon_w}x{mon_h}+0+0")
+                self.overlay.lift()
+                self.overlay.attributes('-topmost', True)
+                self.overlay.config(cursor='crosshair')
+                print("Overlay window created successfully")
+            except Exception as e:
+                print(f"Error creating overlay window: {e}")
+                self.cancel_capture()
+                return
+
+            
+            try:
+                scr_w = self.root.winfo_screenwidth()
+                scr_h = self.root.winfo_screenheight()
+                self.scale_x = mon_w / scr_w
+                self.scale_y = mon_h / scr_h
+                print(f"Scaling factors: {self.scale_x}, {self.scale_y}")
+            except Exception as e:
+                print(f"Error calculating scaling: {e}")
+                
+                self.scale_x = self.scale_y = 1.0
+
+            
+            try:
+                self.tk_img = ImageTk.PhotoImage(self.full_screen_img)
+                self.overlay_canvas = tk.Canvas(self.overlay, width=mon_w, height=mon_h, highlightthickness=0)
+                self.overlay_canvas.place(x=0, y=0, width=mon_w, height=mon_h)
+                self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+                print("Canvas and image created successfully")
+            except Exception as e:
+                print(f"Error creating canvas/image: {e}")
+                self.cancel_capture()
+                return
+
+            
+            try:
+                border_thickness = 3
+                self.overlay_canvas.create_rectangle(0, 0, mon_w, border_thickness, fill="white", width=0)
+                self.overlay_canvas.create_rectangle(0, mon_h - border_thickness, mon_w, mon_h, fill="white", width=0)
+                self.overlay_canvas.create_rectangle(0, 0, border_thickness, mon_h, fill="white", width=0)
+                self.overlay_canvas.create_rectangle(mon_w - border_thickness, 0, mon_w, mon_h, fill="white", width=0)
+                print("Border indicators created successfully")
+            except Exception as e:
+                print(f"Error creating borders: {e}")
+                
+
+            
+            try:
+                self.overlay_canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+                self.overlay_canvas.bind("<B1-Motion>", self.on_mouse_move)
+                self.overlay_canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+                
+                
+                self.overlay_canvas.bind("<Button-3>", self.cancel_capture)
+                
+                
+                self.overlay.bind("<Escape>", self.cancel_capture)
+                self.overlay_canvas.bind("<Key>", self.on_key_press)
+                
+                
+                self.overlay.bind("<FocusOut>", self.on_focus_lost)
+                self.overlay.bind("<Alt-F4>", self.cancel_capture)
+                self.overlay.bind("<Control-c>", self.cancel_capture)
+                self.overlay.bind("<Double-Button-3>", self.cancel_capture)
+                
+                
+                self.overlay_canvas.bind("<MouseWheel>", self.on_mouse_wheel)
+                self.overlay_canvas.bind("<Button-4>", self.on_mouse_wheel)
+                self.overlay_canvas.bind("<Button-5>", self.on_mouse_wheel)
+                
+                print("Event bindings set up successfully")
+            except Exception as e:
+                print(f"Error setting up event bindings: {e}")
+                self.cancel_capture()
+                return
+
+            
+            try:
+                self.overlay.focus_force()
+                self.overlay_canvas.focus_set()
+                self.overlay_canvas.config(takefocus=True)
+                print("Focus set successfully")
+            except Exception as e:
+                print(f"Error setting focus: {e}")
+            
+            
+            self.overlay.after(100, self._set_focus_with_delay)
+            
+            
+            self.overlay.after(60000, self._emergency_timeout)
+            
+            print("Overlay creation completed successfully")
+            
+        except Exception as e:
+            print(f"Critical error in create_overlay: {e}")
+            
+            self.cancel_capture()
 
     def _set_focus_with_delay(self):
-        """Set focus to overlay after a small delay to ensure proper keyboard capture"""
-        if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
-            self.overlay.focus_force()
-            self.overlay_canvas.focus_force()
+
+        try:
+            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+
+                self.overlay.focus_force()
+                self.overlay_canvas.focus_force()
+                
+
+                try:
+                    self.overlay.grab_set()
+                    print("Grab set successfully")
+                except tk.TclError as e:
+                    print(f"Warning: Could not set grab: {e}")
+
+                    try:
+                        self.overlay.grab_set_global()
+                        print("Global grab set as fallback")
+                    except tk.TclError as e2:
+                        print(f"Warning: Could not set global grab either: {e2}")
+
+                
+                print("Focus and grab setup completed")
+            else:
+                print("Overlay no longer exists - skipping focus setup")
+        except Exception as e:
+            print(f"Critical error in _set_focus_with_delay: {e}")
+
             try:
-                self.overlay.grab_set()
-            except tk.TclError:
+                self.cancel_capture()
+            except:
                 pass
 
     def cancel_capture(self, event=None):
-        if self.is_selecting:
-            self.is_selecting = False
-            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+        print("Cancel capture called - exiting crop mode only")
+        
+
+        self.is_selecting = False
+        
+
+        if hasattr(self, 'overlay') and self.overlay:
+            try:
+
+                if self.overlay.winfo_exists():
+                    try:
+                        self.overlay.grab_release()
+                        print("Grab released successfully")
+                    except tk.TclError as e:
+                        print(f"Error releasing grab: {e}")
+                    
+
+                    try:
+                        self.overlay.destroy()
+                        print("Overlay destroyed successfully")
+                    except tk.TclError as e:
+                        print(f"Error destroying overlay: {e}")
+                        
+            except Exception as e:
+                print(f"Critical error in cancel_capture: {e}")
+
                 try:
-                    self.overlay.grab_release()
-                    self.overlay.destroy()
-                except tk.TclError:
+                    if hasattr(self.overlay, 'destroy'):
+                        self.overlay.destroy()
+                except:
                     pass
-            self.overlay = None
             
+
+        self.overlay = None
+        
+
         self.x1 = self.y1 = self.x2 = self.y2 = None
         self.rect = None
+        
+
+        try:
+            if hasattr(self, 'root') and self.root and self.root.winfo_exists():
+                self.root.focus_force()
+                self.root.lift()
+                print("Focus returned to main window")
+        except (tk.TclError, AttributeError) as e:
+            print(f"Error returning focus to main window: {e}")
+        
+        print("Crop mode exited successfully - Main application remains running")
 
     def on_key_press(self, event):
-        """Handle key press events in crop mode"""
-        if event.keysym == "Escape":
+
+        if event.keysym in ["Escape", "q", "Q"]:
+            print(f"Key pressed: {event.keysym} - exiting crop mode only (application stays running)")
             self.cancel_capture(event)
         return "break"
+    
+    def on_focus_lost(self, event=None):
+
+        print("Focus lost - checking if overlay should be closed")
+
+
+        if hasattr(self, 'overlay') and self.overlay:
+            self.overlay.after(1000, self._check_focus_and_cancel)
+    
+    def _check_focus_and_cancel(self):
+
+        try:
+            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+                current_focus = self.overlay.focus_get()
+                if not current_focus or not str(current_focus).startswith(str(self.overlay)):
+                    print("Focus permanently lost - canceling capture")
+                    self.cancel_capture()
+        except Exception as e:
+            print(f"Error in focus check: {e}")
+    
+    def on_mouse_wheel(self, event=None):
+
+        print("Mouse wheel detected - canceling capture as safety measure")
+        self.cancel_capture(event)
+        return "break"
+    
+    def _emergency_timeout(self):
+
+        if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+            print("EMERGENCY TIMEOUT: Force closing overlay after 60 seconds")
+            try:
+
+                print("WARNING: Crop mode has been active for too long. Force closing for safety.")
+            except:
+                pass
+            self.cancel_capture()
 
     def on_mouse_down(self, event):
         if self.is_selecting:
@@ -2537,7 +2748,7 @@ class SukiTranslateApp:
                 return
 
             captured_image = self.captured_image
-            #captured_image.save("Screenshot.png")
+
             
 
             ocr_mode = self.settings.get("ocr_mode", "tesseract")
@@ -2840,7 +3051,7 @@ class SukiTranslateApp:
                 final_width = width
                 final_height = height
 
-            else:  # manual
+            else:
                 label = tk.Label(
                     overlay,
                     text=text,
