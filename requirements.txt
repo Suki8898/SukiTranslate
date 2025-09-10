@@ -4,9 +4,10 @@ pytesseract
 requests
 spylls
 keyboard
+pystray
 pywin32
 opencv-python
 numpy
 fonttools
-pystray
 plyer
+packaging

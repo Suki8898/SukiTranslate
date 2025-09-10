@@ -27,9 +27,12 @@ from plyer import notification
 import shutil
 import collections
 import ctypes
+import time
+from packaging import version
 
 APP_NAME = "Suki Translate"
-VERSION = "1.4.4"
+VERSION = "1.5.1"
+GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -540,10 +543,21 @@ def is_already_running():
                 s.connect(("localhost", 8898))
                 s.send(b"EXIT")
                 s.close()
-                time.sleep(0.5)
-                return True
+                # Wait for the old instance to close
+                time.sleep(1.0)
+                # Check if the old instance has actually closed
+                max_wait = 5  # Maximum wait time in seconds
+                wait_count = 0
+                while os.path.exists(LOCK_FILE) and wait_count < max_wait:
+                    time.sleep(0.5)
+                    wait_count += 0.5
+                # Continue with new instance setup
+                if os.path.exists(LOCK_FILE):
+                    os.remove(LOCK_FILE)
+                # Don't return True here - let the new instance continue
             except (OSError, socket.error):
-                os.remove(LOCK_FILE)
+                if os.path.exists(LOCK_FILE):
+                    os.remove(LOCK_FILE)
     except Exception:
         pass
     try:
@@ -811,6 +825,369 @@ class SpellChecker:
         
         return len(misspelled) == 0, misspelled
 
+class UpdateChecker:
+    def __init__(self, app_ref):
+        self.app_ref = app_ref
+        self.github_api_url = GITHUB_REPO_URL
+        
+    def check_for_updates(self, show_no_update_message=False):
+        try:
+            headers = {
+                'User-Agent': f'{APP_NAME}/{VERSION}'
+            }
+            
+            response = requests.get(self.github_api_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            release_data = response.json()
+            latest_version = release_data.get('tag_name', '').lstrip('v')
+            
+            if not latest_version:
+                if show_no_update_message:
+                    self.show_update_info_dialog("Update Check", "Unable to determine latest version.")
+                return False
+                
+            try:
+                if version.parse(latest_version) > version.parse(VERSION):
+                    self.show_update_dialog(latest_version, release_data)
+                    return True
+                else:
+                    if show_no_update_message:
+                        self.show_update_info_dialog("Update Check", f"You have the latest version ({VERSION}).")
+                    return False
+            except Exception as e:
+                print(f"Version comparison error: {e}")
+                if show_no_update_message:
+                    self.show_update_info_dialog("Update Check", "Unable to compare versions.")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            print(f"Network error checking for updates: {e}")
+            if show_no_update_message:
+                self.show_update_error_dialog("Update Check", "Unable to check for updates. Please check your internet connection.")
+            return False
+        except Exception as e:
+            print(f"Error checking for updates: {e}")
+            if show_no_update_message:
+                self.show_update_error_dialog("Update Check", f"Error checking for updates: {e}")
+            return False
+    
+    def show_update_message_dialog(self, title, message, message_type="info"):
+        msg_window = tk.Toplevel(self.app_ref.root)
+        msg_window.title(title)
+        msg_window.geometry("400x150")
+        msg_window.resizable(False, False)
+        msg_window.grab_set()
+        
+        msg_window.update_idletasks()
+        x = (msg_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (msg_window.winfo_screenheight() // 2) - (150 // 2)
+        msg_window.geometry(f"400x150+{x}+{y}")
+        
+        try:
+            msg_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(msg_window, title, app_ref=self.app_ref, show_maximize=False, use_system_titlebar=False)
+        
+        if hasattr(self.app_ref, 'custom_title_bars'):
+            self.app_ref.custom_title_bars.append(custom_title_bar)
+        
+        def on_msg_close():
+            if hasattr(self.app_ref, 'custom_title_bars') and custom_title_bar in self.app_ref.custom_title_bars:
+                self.app_ref.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            msg_window.destroy()
+        
+        msg_window.protocol("WM_DELETE_WINDOW", on_msg_close)
+        
+        main_frame = ttk.Frame(msg_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(fill="both", expand=True)
+        
+        icon_text = "ℹ️" if message_type == "info" else "❌"
+        icon_label = ttk.Label(content_frame, text=icon_text, font=("Arial", 16))
+        icon_label.pack(side="left", padx=(0, 10))
+        
+        msg_label = ttk.Label(content_frame, text=message, wraplength=300, font=("Arial", 10))
+        msg_label.pack(side="left", fill="both", expand=True)
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        ok_button = ttk.Button(button_frame, text="OK", command=on_msg_close)
+        ok_button.pack(side="right")
+        
+        ok_button.focus()
+        
+        msg_window.bind('<Return>', lambda e: on_msg_close())
+    
+    def show_update_info_dialog(self, title, message):
+        self.show_update_message_dialog(title, message, "info")
+    
+    def show_update_error_dialog(self, title, message):
+        self.show_update_message_dialog(title, message, "error")
+
+    def show_update_dialog(self, latest_version, release_data):
+        release_notes = release_data.get('body', 'No release notes available.')
+        download_url = release_data.get('html_url', 'https://github.com/Suki8898/SukiTranslate/releases/latest')
+        
+        update_window = tk.Toplevel(self.app_ref.root)
+        update_window.title("Update Available")
+        update_window.geometry("500x400")
+        update_window.resizable(False, False)
+        update_window.grab_set()
+        
+        update_window.update_idletasks()
+        x = (update_window.winfo_screenwidth() // 2) - (500 // 2)
+        y = (update_window.winfo_screenheight() // 2) - (400 // 2)
+        update_window.geometry(f"500x400+{x}+{y}")
+        
+        try:
+            update_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(update_window, "Update Available", app_ref=self.app_ref, show_maximize=True, use_system_titlebar=False)
+        
+        if hasattr(self.app_ref, 'custom_title_bars'):
+            self.app_ref.custom_title_bars.append(custom_title_bar)
+        
+        def on_update_close():
+            if hasattr(self.app_ref, 'custom_title_bars') and custom_title_bar in self.app_ref.custom_title_bars:
+                self.app_ref.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            update_window.destroy()
+        
+        update_window.protocol("WM_DELETE_WINDOW", on_update_close)
+            
+        main_frame = ttk.Frame(update_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+
+        title_label = ttk.Label(main_frame, text="Update Available!", font=("Arial", 14, "bold"))
+        title_label.pack(pady=(0, 10))
+        
+        version_frame = ttk.Frame(main_frame)
+        version_frame.pack(fill="x", pady=(0, 10))
+        
+        ttk.Label(version_frame, text=f"Current version: {VERSION}", font=("Arial", 10)).pack(anchor="w")
+        ttk.Label(version_frame, text=f"Latest version: {latest_version}", font=("Arial", 10, "bold")).pack(anchor="w")
+        
+        notes_label = ttk.Label(main_frame, text="Release Notes:", font=("Arial", 10, "bold"))
+        notes_label.pack(anchor="w", pady=(10, 5))
+        
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill="both", expand=True, pady=(0, 15))
+        
+        theme = self.app_ref.theme_values
+        text_bg = theme.get('bg_color', '#ffffff')
+        text_fg = theme.get('fg_color', '#000000')
+        
+        notes_text = tk.Text(text_frame, wrap="word", height=10, font=("Arial", 9),
+                            bg=text_bg, fg=text_fg, insertbackground=text_fg,
+                            selectbackground="#0078d4", selectforeground="white")
+        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=notes_text.yview)
+        notes_text.configure(yscrollcommand=scrollbar.set)
+        
+        notes_text.insert("1.0", release_notes)
+        notes_text.config(state="disabled")
+        
+        notes_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        def open_download_page():
+            webbrowser.open(download_url)
+            on_update_close()
+        
+        ttk.Button(button_frame, text="Download Update", command=open_download_page).pack(side="left")
+        
+    def check_for_updates_on_startup(self):
+        if not self.app_ref.settings.get("auto_check_updates", True):
+            return
+            
+        last_check = self.app_ref.settings.get("last_update_check", 0)
+        current_time = time.time()
+        
+        if current_time - last_check > 86400:
+            settings = self.app_ref.settings.copy()
+            settings["last_update_check"] = current_time
+            self.app_ref.settings_manager.save_settings(settings)
+            self.app_ref.settings = settings
+            
+            threading.Thread(target=self.check_for_updates, daemon=True).start()
+    
+    def show_update_info_dialog(self, title, message):
+        info_window = tk.Toplevel(self.app_ref.root)
+        info_window.geometry("400x200")
+        info_window.resizable(False, False)
+        info_window.grab_set()
+        
+        info_window.update_idletasks()
+        x = (info_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (info_window.winfo_screenheight() // 2) - (200 // 2)
+        info_window.geometry(f"400x200+{x}+{y}")
+        
+        try:
+            info_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(info_window, title, app_ref=self.app_ref, show_maximize=False, use_system_titlebar=False)
+        
+        if hasattr(self.app_ref, 'custom_title_bars'):
+            self.app_ref.custom_title_bars.append(custom_title_bar)
+        
+        def on_info_close():
+            if hasattr(self.app_ref, 'custom_title_bars') and custom_title_bar in self.app_ref.custom_title_bars:
+                self.app_ref.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            info_window.destroy()
+        
+        info_window.protocol("WM_DELETE_WINDOW", on_info_close)
+            
+        main_frame = ttk.Frame(info_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        message_label = ttk.Label(main_frame, text=message, wraplength=350, justify="center", font=("Arial", 10))
+        message_label.pack(pady=(20, 30), expand=True)
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        ttk.Button(button_frame, text="OK", command=on_info_close).pack(anchor="center")
+        
+    def show_update_error_dialog(self, title, message):
+        error_window = tk.Toplevel(self.app_ref.root)
+        error_window.geometry("400x200")
+        error_window.resizable(False, False)
+        error_window.grab_set()
+        
+        error_window.update_idletasks()
+        x = (error_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (error_window.winfo_screenheight() // 2) - (200 // 2)
+        error_window.geometry(f"400x200+{x}+{y}")
+        
+        try:
+            error_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(error_window, title, app_ref=self.app_ref, show_maximize=False, use_system_titlebar=False)
+        
+        if hasattr(self.app_ref, 'custom_title_bars'):
+            self.app_ref.custom_title_bars.append(custom_title_bar)
+        
+        def on_error_close():
+            if hasattr(self.app_ref, 'custom_title_bars') and custom_title_bar in self.app_ref.custom_title_bars:
+                self.app_ref.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            error_window.destroy()
+        
+        error_window.protocol("WM_DELETE_WINDOW", on_error_close)
+            
+        main_frame = ttk.Frame(error_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(expand=True, fill="both")
+        
+        message_label = ttk.Label(content_frame, text=message, wraplength=350, justify="center", font=("Arial", 10), foreground="red")
+        message_label.pack(pady=(20, 30), expand=True)
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        ttk.Button(button_frame, text="OK", command=on_error_close).pack(anchor="center")
+
+    def show_custom_info_dialog(self, title, message):
+        info_window = tk.Toplevel(self.window)
+        info_window.geometry("400x200")
+        info_window.resizable(False, False)
+        info_window.grab_set()
+        
+        info_window.update_idletasks()
+        x = (info_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (info_window.winfo_screenheight() // 2) - (200 // 2)
+        info_window.geometry(f"400x200+{x}+{y}")
+        
+        try:
+            info_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(info_window, title, app_ref=self.app, show_maximize=False, use_system_titlebar=False)
+        
+        if hasattr(self.app, 'custom_title_bars'):
+            self.app.custom_title_bars.append(custom_title_bar)
+        
+        def on_info_close():
+            if hasattr(self.app, 'custom_title_bars') and custom_title_bar in self.app.custom_title_bars:
+                self.app.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            info_window.destroy()
+        
+        info_window.protocol("WM_DELETE_WINDOW", on_info_close)
+            
+        main_frame = ttk.Frame(info_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        message_label = ttk.Label(main_frame, text=message, wraplength=350, justify="center", font=("Arial", 10))
+        message_label.pack(pady=(20, 30), expand=True)
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        ttk.Button(button_frame, text="OK", command=on_info_close).pack(anchor="center")
+        
+    def show_custom_error_dialog(self, title, message):
+        error_window = tk.Toplevel(self.window)
+        error_window.geometry("400x200")
+        error_window.resizable(False, False)
+        error_window.grab_set()
+        
+        error_window.update_idletasks()
+        x = (error_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (error_window.winfo_screenheight() // 2) - (200 // 2)
+        error_window.geometry(f"400x200+{x}+{y}")
+        
+        try:
+            error_window.iconbitmap(ICON_DIR)
+        except:
+            pass
+        
+        custom_title_bar = CustomTitleBar(error_window, title, app_ref=self.app, show_maximize=False, use_system_titlebar=False)
+        
+        if hasattr(self.app, 'custom_title_bars'):
+            self.app.custom_title_bars.append(custom_title_bar)
+        
+        def on_error_close():
+            if hasattr(self.app, 'custom_title_bars') and custom_title_bar in self.app.custom_title_bars:
+                self.app.custom_title_bars.remove(custom_title_bar)
+            custom_title_bar.cleanup()
+            error_window.destroy()
+        
+        error_window.protocol("WM_DELETE_WINDOW", on_error_close)
+            
+        main_frame = ttk.Frame(error_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(expand=True, fill="both")
+        
+        message_label = ttk.Label(content_frame, text=message, wraplength=350, justify="center", font=("Arial", 10), foreground="red")
+        message_label.pack(pady=(20, 30), expand=True)
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+        
+        ttk.Button(button_frame, text="OK", command=on_error_close).pack(anchor="center")
+
 class SettingsManager:
     def __init__(self):
 
@@ -833,7 +1210,9 @@ class SettingsManager:
             "minimize_to_tray": False,
             "ocr_mode": "AI",
             "auto_copy_original_clipboard": False,
-            "auto_copy_clipboard": False
+            "auto_copy_clipboard": False,
+            "auto_check_updates": True,
+            "last_update_check": 0
         }
         self.settings = self.default_settings.copy()
         
@@ -1017,16 +1396,42 @@ class SettingsWindow:
         )
         auto_copy_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
 
+        self.auto_check_updates_var = tk.BooleanVar(value=self.app.settings.get("auto_check_updates", True))
+        auto_check_updates_chk = ttk.Checkbutton(
+            self.general_frame,
+            text="Automatically check for updates",
+            variable=self.auto_check_updates_var,
+            command=self.update_general_settings
+        )
+        auto_check_updates_chk.grid(row=6, column=0, sticky="w", padx=10, pady=5)
+        
+        update_button_frame = ttk.Frame(self.general_frame)
+        update_button_frame.grid(row=7, column=0, sticky="w", padx=10, pady=5)
+        
+        ttk.Button(
+            update_button_frame,
+            text="Check for Updates Now",
+            command=self.manual_update_check
+        ).pack(side="left")
+        
+        version_label = ttk.Label(
+            update_button_frame,
+            text=f"Current version: {VERSION}",
+            font=("Arial", 8)
+        )
+        version_label.pack(side="left", padx=(10, 0))
+
         self.hotkey_var.trace("w", lambda *args: self.update_general_settings())
         self.always_on_top_var.trace("w", lambda *args: self.update_general_settings())
         self.run_at_startup_var.trace("w", lambda *args: self.update_general_settings())
         self.minimize_to_tray_var.trace("w", lambda *args: self.update_general_settings())
         self.auto_copy_original_clipboard_var.trace("w", lambda *args: self.update_general_settings())
         self.auto_copy_clipboard_var.trace("w", lambda *args: self.update_general_settings())
+        self.auto_check_updates_var.trace("w", lambda *args: self.update_general_settings())
 
 
         ocr_frame = ttk.Frame(self.general_frame)
-        ocr_frame.grid(row=6, column=0, sticky="w", padx=10, pady=5)
+        ocr_frame.grid(row=8, column=0, sticky="w", padx=10, pady=5)
         ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
         
         self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
@@ -1036,6 +1441,9 @@ class SettingsWindow:
         self.ocr_mode_var.trace("w", lambda *args: self.update_ocr_mode_dependent_settings())
         
         self.update_ocr_mode_dependent_settings()
+        
+    def manual_update_check(self):
+        threading.Thread(target=lambda: self.app.update_checker.check_for_updates(show_no_update_message=True), daemon=True).start()
 
     def start_hotkey_recording(self):
         if not self.recording:
@@ -1127,6 +1535,7 @@ class SettingsWindow:
         new_settings["ocr_mode"] = self.ocr_mode_var.get()
         new_settings["auto_copy_original_clipboard"] = self.auto_copy_original_clipboard_var.get()
         new_settings["auto_copy_clipboard"] = self.auto_copy_clipboard_var.get()
+        new_settings["auto_check_updates"] = self.auto_check_updates_var.get()
         
         self.app.settings_manager.save_settings(new_settings)
         self.app.settings = new_settings
@@ -1602,7 +2011,7 @@ class SettingsWindow:
 
             return True
         except Exception as e:
-            messagebox.showerror("Update Failed", f"Error downloading translators from GitHub:\n{e}")
+            self.show_custom_error_dialog("Update Failed", f"Error downloading translators from GitHub:\n{e}")
             return False
 
 
@@ -1739,7 +2148,7 @@ class SettingsWindow:
 
     def update_translators_from_github(self):
         if self.update_translator_files():
-            messagebox.showinfo("Done", "Translators updated successfully!")
+            self.show_custom_info_dialog("Done", "Translators updated successfully!")
             self.translator_manager.load_translators()
             self.translator_frame.destroy()
             self.translator_frame = ttk.Frame(self.notebook)
@@ -1918,6 +2327,8 @@ class SukiTranslateApp:
         self.last_extracted_text = None 
         self.captured_image = None
         self.current_overlay = None
+        
+        self.update_checker = UpdateChecker(self)
         
         self.system_tray_icon()
         
@@ -3044,11 +3455,33 @@ class SukiTranslateApp:
                 final_width = max(1, final_width)
                 final_height = max(1, final_height)
             
-            screen_width = overlay.winfo_screenwidth()
-            screen_height = overlay.winfo_screenheight()
-            
-            overlay_x = max(0, min(overlay_x, screen_width - final_width))
-            overlay_y = max(0, min(overlay_y, screen_height - final_height))
+            try:
+                import mss
+                with mss.mss() as sct:
+                    crop_center_x = overlay_x + final_width // 2
+                    crop_center_y = overlay_y + final_height // 2
+                    
+                    target_monitor = sct.monitors[0]
+                    for monitor in sct.monitors[1:]:
+                        if (monitor["left"] <= crop_center_x < monitor["left"] + monitor["width"] and
+                            monitor["top"] <= crop_center_y < monitor["top"] + monitor["height"]):
+                            target_monitor = monitor
+                            break
+                    
+                    screen_left = target_monitor["left"]
+                    screen_top = target_monitor["top"] 
+                    screen_width = target_monitor["width"]
+                    screen_height = target_monitor["height"]
+                    
+                    overlay_x = max(screen_left, min(overlay_x, screen_left + screen_width - final_width))
+                    overlay_y = max(screen_top, min(overlay_y, screen_top + screen_height - final_height))
+                    
+            except Exception as e:
+                print(f"Error detecting monitor for result window: {e}")
+                screen_width = overlay.winfo_screenwidth()
+                screen_height = overlay.winfo_screenheight()
+                overlay_x = max(0, min(overlay_x, screen_width - final_width))
+                overlay_y = max(0, min(overlay_y, screen_height - final_height))
             
             overlay.geometry(f"{final_width}x{final_height}+{overlay_x}+{overlay_y}")
 
@@ -3309,6 +3742,15 @@ if __name__ == "__main__":
                 app.quit_application()
         
         root.protocol("WM_DELETE_WINDOW", on_closing)
+        
+        def delayed_update_check():
+            try:
+                app.update_checker.check_for_updates_on_startup()
+            except Exception as e:
+                print(f"Error checking for updates on startup: {e}")
+        
+        root.after(5000, delayed_update_check)
+        
         root.mainloop()
 
     except Exception as e:
