@@ -31,7 +31,7 @@ import time
 from packaging import version
 
 APP_NAME = "Suki Translate"
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 class CustomTitleBar:
@@ -2222,7 +2222,6 @@ class SukiTranslateApp:
         self.translator_manager = TranslatorManager()
         
         self.x1 = self.y1 = self.x2 = self.y2 = None
-        self.is_selecting = False
         self.full_screen_img = None
         self.rect = None
         
@@ -2414,17 +2413,8 @@ class SukiTranslateApp:
             keyboard.add_hotkey(hotkey.lower(), self.start_capture)
             self.current_hotkey = hotkey
 
-            keyboard.add_hotkey('ctrl+shift+esc', self.emergency_exit_crop_mode)
-
-            keyboard.add_hotkey('ctrl+alt+q', self.emergency_exit_crop_mode)  
         except Exception as e:
             print(f"Error setting global hotkey: {e}")
-    
-    def emergency_exit_crop_mode(self):
-        if hasattr(self, 'is_selecting') and self.is_selecting:
-            self.cancel_capture()
-        else:
-            print("No active crop mode detected - application continues running normally")
 
     def unbind_global_hotkey(self):
         try:
@@ -2815,13 +2805,8 @@ class SukiTranslateApp:
         if hasattr(self, 'overlay') and self.overlay:
             self.cancel_capture()
 
-        if self.is_selecting:
-            self.is_selecting = False
-
-        self.x1 = self.y1 = self.x2 = self.y2 = None
         self.rect = None
 
-        self.is_selecting = True
         self.root.after(100, self.create_overlay)
         
     def create_overlay(self):
@@ -2965,9 +2950,6 @@ class SukiTranslateApp:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
         except Exception as e:
             print(f"Error checking/releasing mouse button state: {e}")
-        
-        self.is_selecting = False
-        
 
         if hasattr(self, 'overlay') and self.overlay:
             try:
@@ -2978,7 +2960,6 @@ class SukiTranslateApp:
                     except tk.TclError as e:
                         print(f"Error releasing grab: {e}")
                     
-
                     try:
                         self.overlay.destroy()
                     except tk.TclError as e:
@@ -2993,14 +2974,9 @@ class SukiTranslateApp:
                 except:
                     pass
             
-
         self.overlay = None
-        
-
-        self.x1 = self.y1 = self.x2 = self.y2 = None
         self.rect = None
         
-
         try:
             if hasattr(self, 'root') and self.root and self.root.winfo_exists():
                 self.root.focus_force()
@@ -3045,13 +3021,13 @@ class SukiTranslateApp:
             self.cancel_capture()
 
     def on_mouse_down(self, event):
-        if self.is_selecting:
-            self.x1 = event.x
-            self.y1 = event.y
-            self.rect = None
+        print(f"Mouse down on: {event.widget}, at: {event.x} {event.y}")
+        self.x1 = event.x
+        self.y1 = event.y
+        self.rect = None
 
     def on_mouse_move(self, event):
-        if self.is_selecting and self.x1 is not None and self.y1 is not None:
+        if  self.x1 is not None and self.y1 is not None:
             self.x2 = event.x
             self.y2 = event.y
             if self.rect:
@@ -3059,9 +3035,7 @@ class SukiTranslateApp:
             self.rect = self.overlay_canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2, outline="red", width=1)
 
     def on_mouse_up(self, event):
-        if not self.is_selecting:
-            return
-        self.is_selecting = False
+        print(f"Mouse up on: {event.widget}, at: {event.x} {event.y}")
 
         x1l, y1l = self.x1, self.y1
         x2l, y2l = event.x, event.y
