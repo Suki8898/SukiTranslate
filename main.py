@@ -29,9 +29,10 @@ import collections
 import ctypes
 import time
 from packaging import version
+import ctypes
 
 APP_NAME = "Suki Translate"
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 class CustomTitleBar:
@@ -418,6 +419,25 @@ LOCK_FILE = os.path.join(APPDATA_DIR, 'app.lock')
 
 GLOBAL_LOG_BUFFER = collections.deque(maxlen=2000) 
 ACTIVE_LOG_WIDGET = None 
+
+settings_path = os.path.join(os.getenv('APPDATA'), 'Suki8898', 'SukiTranslate', 'settings.json')
+run_as_admin = False
+if os.path.exists(settings_path):
+    try:
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            settings_data = json.load(f)
+            run_as_admin = settings_data.get("run_as_admin", False)
+    except:
+        pass
+
+if run_as_admin and not ctypes.windll.shell32.IsUserAnAdmin():
+    try:
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        os._exit(0)
+    except Exception as e:
+        print(f"Failed to restart as admin: {e}")
+        os._exit(1)
+
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -1212,6 +1232,7 @@ class SettingsManager:
             "auto_copy_original_clipboard": False,
             "auto_copy_clipboard": False,
             "auto_check_updates": True,
+            "run_as_admin": True,
             "last_update_check": 0
         }
         self.settings = self.default_settings.copy()
@@ -1368,6 +1389,16 @@ class SettingsWindow:
         )
         run_at_startup_chk.grid(row=2, column=0, sticky="w", padx=10, pady=5)
 
+        self.run_as_admin_var = tk.BooleanVar(value=self.app.settings.get("run_as_admin", False))
+        run_as_admin_chk = ttk.Checkbutton(
+            self.general_frame,
+            text="Run as administrator",
+            variable=self.run_as_admin_var,
+            command=self.toggle_run_as_admin
+        )
+        run_as_admin_chk.grid(row=3, column=0, sticky="w", padx=10, pady=5)
+
+
         self.minimize_to_tray_var = tk.BooleanVar(value=self.app.settings.get("minimize_to_tray", False))
         minimize_to_tray_chk = ttk.Checkbutton(
             self.general_frame,
@@ -1376,7 +1407,7 @@ class SettingsWindow:
             command=self.update_general_settings
         )
 
-        minimize_to_tray_chk.grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        minimize_to_tray_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
 
         self.auto_copy_original_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_original_clipboard", False))
         self.auto_copy_original_clipboard_chk = ttk.Checkbutton(
@@ -1385,7 +1416,7 @@ class SettingsWindow:
             variable=self.auto_copy_original_clipboard_var,
             command=self.update_general_settings
         )
-        self.auto_copy_original_clipboard_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        self.auto_copy_original_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
 
         self.auto_copy_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_clipboard", False))
         auto_copy_clipboard_chk = ttk.Checkbutton(
@@ -1394,7 +1425,7 @@ class SettingsWindow:
             variable=self.auto_copy_clipboard_var,
             command=self.update_general_settings
         )
-        auto_copy_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        auto_copy_clipboard_chk.grid(row=6, column=0, sticky="w", padx=10, pady=5)
 
         self.auto_check_updates_var = tk.BooleanVar(value=self.app.settings.get("auto_check_updates", True))
         auto_check_updates_chk = ttk.Checkbutton(
@@ -1403,10 +1434,10 @@ class SettingsWindow:
             variable=self.auto_check_updates_var,
             command=self.update_general_settings
         )
-        auto_check_updates_chk.grid(row=6, column=0, sticky="w", padx=10, pady=5)
+        auto_check_updates_chk.grid(row=7, column=0, sticky="w", padx=10, pady=5)
         
         update_button_frame = ttk.Frame(self.general_frame)
-        update_button_frame.grid(row=7, column=0, sticky="w", padx=10, pady=5)
+        update_button_frame.grid(row=8, column=0, sticky="w", padx=10, pady=5)
         
         ttk.Button(
             update_button_frame,
@@ -1431,7 +1462,7 @@ class SettingsWindow:
 
 
         ocr_frame = ttk.Frame(self.general_frame)
-        ocr_frame.grid(row=8, column=0, sticky="w", padx=10, pady=5)
+        ocr_frame.grid(row=9, column=0, sticky="w", padx=10, pady=5)
         ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
         
         self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
@@ -1515,6 +1546,28 @@ class SettingsWindow:
         else:
             self.run_at_startup_var.set(not new_value)
             messagebox.showerror("Error", "Could not modify startup settings")
+
+    def toggle_run_as_admin(self):
+        new_value = self.run_as_admin_var.get()
+        new_settings = self.app.settings.copy()
+        new_settings["run_as_admin"] = new_value
+        self.app.settings_manager.save_settings(new_settings)
+        self.app.settings = new_settings
+
+        if new_value:
+            messagebox.showinfo("Run as Admin", "The app will now restart with administrator rights.")
+            self.restart_as_admin()
+
+    def restart_as_admin(self):
+        import sys, ctypes, subprocess
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            params = " ".join(sys.argv)
+            try:
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                os._exit(0)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to restart as admin: {e}")
+
 
     def update_ocr_mode_dependent_settings(self):
         self.update_general_settings()
@@ -3021,7 +3074,6 @@ class SukiTranslateApp:
             self.cancel_capture()
 
     def on_mouse_down(self, event):
-        print(f"Mouse down on: {event.widget}, at: {event.x} {event.y}")
         self.x1 = event.x
         self.y1 = event.y
         self.rect = None
@@ -3035,8 +3087,6 @@ class SukiTranslateApp:
             self.rect = self.overlay_canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2, outline="red", width=1)
 
     def on_mouse_up(self, event):
-        print(f"Mouse up on: {event.widget}, at: {event.x} {event.y}")
-
         x1l, y1l = self.x1, self.y1
         x2l, y2l = event.x, event.y
         x1l, x2l = min(x1l, x2l), max(x1l, x2l)
@@ -3044,7 +3094,7 @@ class SukiTranslateApp:
 
         if (x2l - x1l) < 5 or (y2l - y1l) < 5:
             self.notify_small_area()
-            self.x1 = self.y1 = self.x2 = self.y2 = self.rect = None
+            self.rect = None
             return
 
         cw = max(1, self.overlay_canvas.winfo_width())
