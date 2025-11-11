@@ -30,9 +30,10 @@ import ctypes
 import time
 from packaging import version
 import ctypes
+import colorsys
 
 APP_NAME = "Suki Translate"
-VERSION = "1.6.0"
+VERSION = "1.8.0"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 class CustomTitleBar:
@@ -90,23 +91,41 @@ class CustomTitleBar:
         button_height = 35
         
         if show_close:
-            self.close_button = tk.Button(self.right_frame, text="×", font=("Arial", 14, "bold"),
-                                        width=3, height=1, relief="flat", bd=0,
-                                        command=self.close_window)
+            self.close_button = tk.Button(
+                self.right_frame, 
+                text="×", 
+                font=("Arial", 14, "bold"), 
+                width=3, 
+                height=1, 
+                relief="flat", 
+                bd=0, 
+                command=self.close_window)
             self.close_button.pack(side="right", fill="y")
             self.setup_button_hover(self.close_button, "#ff4444")
         
         if show_maximize:
-            self.maximize_button = tk.Button(self.right_frame, text="□", font=("Arial", 12),
-                                           width=3, height=1, relief="flat", bd=0,
-                                           command=self.maximize_window)
+            self.maximize_button = tk.Button(
+                self.right_frame, 
+                text="□", 
+                font=("Arial", 12), 
+                width=3, 
+                height=1, 
+                relief="flat", 
+                bd=0, 
+                command=self.maximize_window)
             self.maximize_button.pack(side="right", fill="y")
             self.setup_button_hover(self.maximize_button)
         
         if show_minimize:
-            self.minimize_button = tk.Button(self.right_frame, text="─", font=("Arial", 12, "bold"),
-                                           width=3, height=1, relief="flat", bd=0,
-                                           command=self.minimize_window)
+            self.minimize_button = tk.Button(
+                self.right_frame,
+                text="─", 
+                font=("Arial", 12, "bold"), 
+                width=3, 
+                height=1, 
+                relief="flat", 
+                bd=0, 
+                command=self.minimize_window)
             self.minimize_button.pack(side="right", fill="y")
             self.setup_button_hover(self.minimize_button)
         
@@ -271,14 +290,6 @@ class CustomTitleBar:
             self.start_x = event.x_root
             self.start_y = event.y_root
     
-    def minimize_window(self):
-        if self.app_ref and hasattr(self.app_ref, 'root') and self.parent_window == self.app_ref.root:
-            self.parent_window.withdraw()
-            if not self.app_ref.tray_icon or not getattr(self.app_ref, '_tray_thread_started', False):
-                self.app_ref.system_tray_icon()
-        else:
-            self.parent_window.withdraw()
-    
     def maximize_window(self):
         if hasattr(self.parent_window, '_is_maximized') and self.parent_window._is_maximized:
             if hasattr(self.parent_window, '_normal_geometry'):
@@ -308,6 +319,93 @@ class CustomTitleBar:
                 self.cleanup()
                 self.parent_window.destroy()
     
+    def show_mini_bar(self):
+        if hasattr(self, "mini_bar") and self.mini_bar.winfo_exists():
+            self.mini_bar.lift()
+            return
+
+        self.mini_bar = tk.Toplevel(self.parent_window)
+        self.mini_bar.overrideredirect(True)
+        self.mini_bar.attributes("-topmost", True)
+        self.mini_bar.configure(bg="#2b2b2b")
+
+        self.parent_window.update_idletasks()
+        x = self.parent_window.winfo_rootx()
+        y = self.parent_window.winfo_rooty()
+        main_width = self.parent_window.winfo_width()
+        main_height = self.parent_window.winfo_height()
+
+        width, height = 165, 40
+
+        self.mini_bar.geometry(f"{width}x{height}+{x}+{y}")
+
+        try:
+            self.mini_bar.wm_attributes("-alpha", 0.92)
+        except:
+            pass
+
+        def create_rainbow_canvas(parent, text="S u k i T r a n s la t e", font=("ZFVCutiegirl", 11, "bold"), bg="#2b2b2b", speed=50):
+            canvas = tk.Canvas(parent, bg=bg, highlightthickness=0)
+            canvas.pack(expand=True, fill="both")
+
+            hue = 0.0
+
+            def draw_text():
+                nonlocal hue
+                canvas.delete("all")
+
+                for i, ch in enumerate(reversed(text)):
+                    offset = (hue + i * 0.01) % 1.0
+                    r, g, b = [int(255 * v) for v in colorsys.hsv_to_rgb(offset, 1, 1)]
+                    color = f'#{r:02x}{g:02x}{b:02x}'
+                    canvas.create_text(20 + (len(text) - i - 1) * 5, 20, text=ch, fill=color, font=font, anchor="w")
+
+                hue = (hue + 0.02) % 1.0
+                canvas.after(speed, draw_text)
+
+            draw_text()
+            return canvas
+
+        canvas = create_rainbow_canvas(self.mini_bar, text="S u k i T r a n s la t e")
+
+        canvas.bind("<Button-1>", self.start_move)
+        canvas.bind("<B1-Motion>", self.do_move)
+        canvas.bind("<Double-Button-1>", lambda e: self.restore_main_window())
+        canvas.bind("<Enter>", lambda e: canvas.configure(bg="#3c3c3c"))
+        canvas.bind("<Leave>", lambda e: canvas.configure(bg="#2b2b2b"))
+
+    def start_move(self, event):
+        self._x = event.x
+        self._y = event.y
+
+    def do_move(self, event):
+        x = event.x_root - self._x
+        y = event.y_root - self._y
+        self.mini_bar.geometry(f"+{x}+{y}")
+
+    def restore_main_window(self):
+        if hasattr(self, "mini_bar") and self.mini_bar.winfo_exists():
+            self.mini_bar.update_idletasks()
+            x = self.mini_bar.winfo_x()
+            y = self.mini_bar.winfo_y()
+            self.mini_bar.destroy()
+
+            self.parent_window.geometry(f"+{x}+{y}")
+
+        self.parent_window.deiconify()
+        self.parent_window.lift()
+        self.parent_window.attributes("-topmost", True)
+        self.parent_window.after(100, lambda: self.parent_window.attributes("-topmost", False))
+
+    def minimize_window(self):
+        if self.app_ref and hasattr(self.app_ref, 'root') and self.parent_window == self.app_ref.root:
+            self.parent_window.withdraw()
+            self.show_mini_bar()
+            if not self.app_ref.tray_icon or not getattr(self.app_ref, '_tray_thread_started', False):
+                self.app_ref.system_tray_icon()
+        else:
+            self.parent_window.withdraw()
+
     def apply_theme(self, theme_values):
 
         try:
@@ -1222,6 +1320,7 @@ class SettingsManager:
             "result_font_size": 12,
             "display_mode": "manual",
             "custom_font_color": "#db9aaa",
+            "custom_stroke_color": "#000000", 
             "custom_bg_color": "#000000",
             "hotkey": "Ctrl+Q",
             "always_on_top": False,
@@ -1604,6 +1703,7 @@ class SettingsWindow:
         new_settings["result_font_size"] = self.font_size_var.get()
         new_settings["display_mode"] = self.display_mode.get()
         new_settings["custom_font_color"] = self.font_color.get()
+        new_settings["custom_stroke_color"] = self.stroke_color.get()
         new_settings["custom_bg_color"] = self.bg_color.get()
         new_settings["sample_text"] = self.sample_text.get()
 
@@ -1617,6 +1717,14 @@ class SettingsWindow:
             self.font_color.set(color)
             self.font_color_box.config(bg=color)
             self.update_settings_immediately()
+
+    def choose_stroke_color(self):
+        color = colorchooser.askcolor(color=self.stroke_color.get())[1]
+        if color:
+            self.stroke_color.set(color)
+            self.stroke_color_box.config(bg=color)
+            self.update_settings_immediately()
+
 
     def choose_bg_color(self):
         color = colorchooser.askcolor(color=self.bg_color.get())[1]
@@ -2109,6 +2217,19 @@ class SettingsWindow:
         self.font_color_box.bind("<Button-1>", lambda e: self.choose_font_color())
         font_color_frame.columnconfigure(1, weight=1)
 
+
+        stroke_color_frame = ttk.Frame(self.display_tab)
+        stroke_color_frame.grid(row=3, column=1, sticky="w", padx=(10, 10), pady=10)
+
+        ttk.Label(stroke_color_frame, text="Stroke Color:", width=20).grid(row=0, column=0, sticky="w")
+        self.stroke_color = tk.StringVar(value=self.app.settings.get("custom_stroke_color", "#000000"))
+        self.stroke_color_box = tk.Canvas(stroke_color_frame, width=30, height=15, bg=self.stroke_color.get(),
+                                        highlightthickness=1, highlightbackground="black", cursor="hand2")
+        self.stroke_color_box.grid(row=0, column=1, sticky="w")
+        self.stroke_color_box.bind("<Button-1>", lambda e: self.choose_stroke_color())
+        stroke_color_frame.columnconfigure(1, weight=1)
+
+
         bg_color_frame = ttk.Frame(self.display_tab)
 
         ttk.Label(bg_color_frame, text="Background Color", width=20).grid(row=0, column=0, sticky="e")
@@ -2143,7 +2264,15 @@ class SettingsWindow:
 
         self.sample_text = tk.StringVar(value=self.app.settings.get("sample_text", "Suki loves boba, naps, and head scratches UwU"))
 
-        self.sample_entry = tk.Entry(self.display_tab, textvariable=self.sample_text, font=(self.font_var.get(), self.font_size_var.get()), fg=self.font_color.get(), bg=self.bg_color.get(), justify="center")
+        self.sample_entry = tk.Entry(
+            self.display_tab, 
+            textvariable=self.sample_text, 
+            font=(self.font_var.get(), 
+            self.font_size_var.get()), 
+            fg=self.font_color.get(), 
+            bg=self.bg_color.get(), 
+            justify="center"
+            )
         self.sample_entry.grid(row=6 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
 
         def update_sample_text(*args):
@@ -2156,6 +2285,7 @@ class SettingsWindow:
         self.font_var.trace_add("write", update_sample_text)
         self.font_size_var.trace_add("write", update_sample_text)
         self.font_color.trace_add("write", update_sample_text)
+        self.stroke_color.trace_add("write", update_sample_text)
         self.bg_color.trace_add("write", update_sample_text)
 
         self.dark_mode_var.trace("w", lambda *args: self.update_settings_immediately())
@@ -2163,6 +2293,7 @@ class SettingsWindow:
         self.font_size_var.trace("w", lambda *args: self.update_settings_immediately())
         self.display_mode.trace("w", lambda *args: self.update_settings_immediately())
         self.font_color.trace("w", lambda *args: self.update_settings_immediately())
+        self.stroke_color.trace("w", lambda *args: self.update_settings_immediately())
         self.bg_color.trace("w", lambda *args: self.update_settings_immediately())
         self.sample_text.trace("w", lambda *args: self.update_settings_immediately())
 
@@ -2423,18 +2554,43 @@ class SukiTranslateApp:
             self._tray_thread_started = True
 
     def show_window_from_tray(self):
-        self.root.after(1, self.show_window)
+        tb = None
+        if hasattr(self, 'custom_title_bars'):
+            for t in self.custom_title_bars:
+                try:
+                    if t and not t.is_destroyed() and getattr(t, 'parent_window', None) == self.root:
+                        tb = t
+                        break
+                except Exception:
+                    continue
+
+        # Nếu tìm được title bar và nó có method restore_main_window -> dùng luôn
+        if tb and hasattr(tb, 'restore_main_window'):
+            try:
+                tb.restore_main_window()
+                return
+            except Exception as e:
+                print(f"[show_window_from_tray] restore_main_window failed: {e}")
+
+        # Fallback: hành vi mặc định
+        try:
+            self.root.after(1, self.show_window)
+        except Exception as e:
+            # nếu show_window cũng có vấn đề thì cố gắng trực tiếp restore như restore_main_window
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.attributes("-topmost", True)
+                self.root.after(100, lambda: self.root.attributes("-topmost", False))
+                self.root.focus_force()
+            except Exception as e2:
+                print(f"[show_window_from_tray] fallback failed: {e2}")
 
     def open_settings_from_tray(self):
         self.root.after(1, self.open_settings)
 
     def quit_application_from_tray(self):
         self.root.after(1, self.quit_application)
-
-    def show_window(self):
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
 
     def quit_application(self):
         if hasattr(self, 'original_stdout') and self.original_stdout:
@@ -3076,6 +3232,8 @@ class SukiTranslateApp:
     def on_mouse_down(self, event):
         self.x1 = event.x
         self.y1 = event.y
+        self.x2 = None
+        self.y2 = None
         self.rect = None
 
     def on_mouse_move(self, event):
@@ -3091,11 +3249,6 @@ class SukiTranslateApp:
         x2l, y2l = event.x, event.y
         x1l, x2l = min(x1l, x2l), max(x1l, x2l)
         y1l, y2l = min(y1l, y2l), max(y1l, y2l)
-
-        if (x2l - x1l) < 5 or (y2l - y1l) < 5:
-            self.notify_small_area()
-            self.rect = None
-            return
 
         cw = max(1, self.overlay_canvas.winfo_width())
         ch = max(1, self.overlay_canvas.winfo_height())
@@ -3130,8 +3283,6 @@ class SukiTranslateApp:
         self.captured_image = self.full_screen_img.crop((x1p, y1p, x2p, y2p))
 
         threading.Thread(target=self.perform_translation).start()
-
-
 
     def perform_translation(self):
         try:
@@ -3336,6 +3487,7 @@ class SukiTranslateApp:
             font_name = self.settings.get("result_font", "Arial")
             font_size = self.settings.get("result_font_size", 12)
             font_color = self.settings.get("custom_font_color", "#db9aaa")
+            stroke_color = self.settings.get("custom_stroke_color", "#000000")
             bg_color = self.settings.get("custom_bg_color", "#000000")
 
             overlay = tk.Toplevel(self.root)
@@ -3391,7 +3543,7 @@ class SukiTranslateApp:
                     bbox = draw.textbbox((0,0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     x = (capture_width - text_width) / 2
-                    draw.text((x, y), line, font=font, fill=font_color)
+                    draw.text((x, y), line, font=font, fill=font_color, stroke_width=2, stroke_fill=stroke_color)
                     y += font.size
 
                 self.tk_img = ImageTk.PhotoImage(inpainted_img_pil)
@@ -3441,7 +3593,7 @@ class SukiTranslateApp:
                     bbox = draw.textbbox((0,0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     x = (capture_width - text_width) / 2
-                    draw.text((x, y), line, font=font, fill=font_color)
+                    draw.text((x, y), line, font=font, fill=font_color, stroke_width=2, stroke_fill=stroke_color)
                     y += font.size
 
                 self.tk_img = ImageTk.PhotoImage(bg_pil)
