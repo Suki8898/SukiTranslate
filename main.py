@@ -33,8 +33,17 @@ import ctypes
 import colorsys
 
 APP_NAME = "Suki Translate"
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
+
+THEME_BG_COLOR = "#2e2e2e"
+THEME_FG_COLOR = "#ffffff"
+THEME_ENTRY_BG = "#3c3c3c"
+THEME_ACTIVE_BG = "#444444"
+THEME_SCROLLBAR_BG = "#3c3c3c"
+THEME_SCROLLBAR_TROUGH = "#2e2e2e"
+THEME_SCROLLBAR_ACTIVE = "#555555"
+THEME_SCROLLBAR_ARROW = "#ffffff"
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -139,9 +148,9 @@ class CustomTitleBar:
     
     def get_default_theme(self):
         return {
-            'bg_color': '#f0f0f0',
-            'fg_color': '#000000',
-            'active_bg': '#e0e0e0'
+            'bg_color': THEME_BG_COLOR,
+            'fg_color': THEME_FG_COLOR,
+            'active_bg': THEME_ACTIVE_BG
         }
     
     def setup_button_hover(self, button, hover_color=None):
@@ -149,7 +158,7 @@ class CustomTitleBar:
             if self.app_ref and hasattr(self.app_ref, 'theme_values'):
                 hover_color = self.app_ref.theme_values.get('active_bg', '#e0e0e0')
             else:
-                hover_color = '#e0e0e0'
+                hover_color = THEME_ACTIVE_BG
         
         original_color = button.cget('bg')
         
@@ -1698,7 +1707,6 @@ class SettingsWindow:
 
     def update_settings_immediately(self):
         new_settings = self.app.settings.copy()
-        new_settings["dark_mode"] = self.dark_mode_var.get()
         new_settings["result_font"] = self.font_var.get()
         new_settings["result_font_size"] = self.font_size_var.get()
         new_settings["display_mode"] = self.display_mode.get()
@@ -1739,15 +1747,6 @@ class SettingsWindow:
         else:
             self.manual_frame.forget()
     
-    def toggle_dark_mode_immediate(self):
-        new_value = self.dark_mode_var.get()
-        self.app.settings["dark_mode"] = new_value
-        self.app.apply_theme()
-        if hasattr(self.app, 'edit_window') and self.app.edit_window and self.app.edit_window.winfo_exists():
-            self.app.update_edit_window_theme()
-        
-        self.apply_translator_canvas_theme()
-
     def open_translators_folder(self):
         try:
             os.startfile(TRANSLATORS_DIR)
@@ -2000,40 +1999,25 @@ class SettingsWindow:
     def apply_translator_canvas_theme(self):
 
         if hasattr(self, 'translator_canvas'):
-            dark_mode = self.app.settings.get("dark_mode", False)
-            
             style = ttk.Style()
+            self.translator_canvas.configure(bg=THEME_BG_COLOR)
             
-            if dark_mode:
-                bg_color = "#2e2e2e"
-                scrollbar_bg = "#3c3c3c"
-                scrollbar_trough = "#2e2e2e"
-                scrollbar_arrow = "#ffffff"
-                
-                self.translator_canvas.configure(bg=bg_color)
-                
-                style.configure(
-                    "Translator.Vertical.TScrollbar",
-                    background=scrollbar_bg,
-                    troughcolor=scrollbar_trough,
-                    arrowcolor=scrollbar_arrow,
-                    bordercolor=scrollbar_bg,
-                    lightcolor=scrollbar_bg,
-                    darkcolor=scrollbar_bg
-                )
-                style.map(
-                    "Translator.Vertical.TScrollbar",
-                    background=[("active", "#444444"), ("pressed", "#555555")]
-                )
-                
-                if hasattr(self, 'translator_scrollbar'):
-                    self.translator_scrollbar.configure(style="Translator.Vertical.TScrollbar")
-            else:
-                bg_color = "#ffffff"
-                self.translator_canvas.configure(bg=bg_color)
-                
-                if hasattr(self, 'translator_scrollbar'):
-                    self.translator_scrollbar.configure(style="Vertical.TScrollbar")
+            style.configure(
+                "Translator.Vertical.TScrollbar",
+                background=THEME_SCROLLBAR_BG,
+                troughcolor=THEME_SCROLLBAR_TROUGH,
+                arrowcolor=THEME_SCROLLBAR_ARROW,
+                bordercolor=THEME_SCROLLBAR_BG,
+                lightcolor=THEME_SCROLLBAR_BG,
+                darkcolor=THEME_SCROLLBAR_BG
+            )
+            style.map(
+                "Translator.Vertical.TScrollbar",
+                background=[("active", THEME_ACTIVE_BG), ("pressed", THEME_SCROLLBAR_ACTIVE)]
+            )
+            
+            if hasattr(self, 'translator_scrollbar'):
+                self.translator_scrollbar.configure(style="Translator.Vertical.TScrollbar")
 
     def save_active_translator_specific_params(self):
         active_translator = self.translator_manager.active_translator
@@ -2177,17 +2161,8 @@ class SettingsWindow:
 
 
     def setup_display_tab(self):
-        self.dark_mode_var = tk.BooleanVar(value=self.app.settings.get("dark_mode", False))
-        dark_mode_chk = ttk.Checkbutton(
-            self.display_tab,
-            text="Enable Dark Mode",
-            variable=self.dark_mode_var,
-            command=self.toggle_dark_mode_immediate
-        )
-        dark_mode_chk.grid(row=0, column=0, sticky="w", padx=10, pady=10)
-
         font_frame = ttk.Frame(self.display_tab)
-        font_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=10)
+        font_frame.grid(row=0, column=0, sticky="ew", padx=(10, 10), pady=10)
         self.display_tab.columnconfigure(0, weight=1)  
 
         ttk.Label(font_frame, text="Font Name", width=20).grid(row=0, column=0, sticky="e")
@@ -2198,7 +2173,7 @@ class SettingsWindow:
         font_frame.columnconfigure(1, weight=1)
 
         size_frame = ttk.Frame(self.display_tab)
-        size_frame.grid(row=2, column=0, sticky="ew", padx=(10, 10), pady=10)
+        size_frame.grid(row=1, column=0, sticky="ew", padx=(10, 10), pady=10)
 
         ttk.Label(size_frame, text="Font Size", width=20).grid(row=0, column=0, sticky="e")
         self.font_size_var = tk.IntVar(value=self.app.settings.get("result_font_size", 12))
@@ -2207,7 +2182,7 @@ class SettingsWindow:
         size_frame.columnconfigure(1, weight=1)
 
         font_color_frame = ttk.Frame(self.display_tab)
-        font_color_frame.grid(row=3, column=0, sticky="w", padx=(10, 10), pady=10)
+        font_color_frame.grid(row=2, column=0, sticky="w", padx=(10, 10), pady=10)
 
         ttk.Label(font_color_frame, text="Font Color", width=20).grid(row=0, column=0, sticky="e")
         self.font_color = tk.StringVar(value=self.app.settings.get("custom_font_color", "#000000")) 
@@ -2219,7 +2194,7 @@ class SettingsWindow:
 
 
         stroke_color_frame = ttk.Frame(self.display_tab)
-        stroke_color_frame.grid(row=3, column=1, sticky="w", padx=(10, 10), pady=10)
+        stroke_color_frame.grid(row=2, column=1, sticky="w", padx=(10, 10), pady=10)
 
         ttk.Label(stroke_color_frame, text="Stroke Color:", width=20).grid(row=0, column=0, sticky="w")
         self.stroke_color = tk.StringVar(value=self.app.settings.get("custom_stroke_color", "#000000"))
@@ -2240,17 +2215,17 @@ class SettingsWindow:
         self.bg_color_box.bind("<Button-1>", lambda e: self.choose_bg_color())
         bg_color_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(self.display_tab, text="Background Color Mode:").grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        ttk.Label(self.display_tab, text="Background Color Mode:").grid(row=4, column=0, sticky="w", padx=10, pady=5)
         self.display_mode = tk.StringVar(value=self.app.settings.get("display_mode", "manual"))
 
         empty_row4_frame = ttk.Frame(self.display_tab)
 
         def update_display_mode():
             if self.display_mode.get() == "manual":
-                bg_color_frame.grid(row=4, column=0, sticky="w", padx=(10, 10), pady=10)
+                bg_color_frame.grid(row=3, column=0, sticky="w", padx=(10, 10), pady=10)
             else:
                 bg_color_frame.grid_forget()
-                empty_row4_frame.grid(row=4, column=0, pady=18)
+                empty_row4_frame.grid(row=3, column=0, pady=18)
             self.update_settings_immediately()
 
         modes = [("Manual", "manual"), ("Auto", "auto"), ("Blur", "blur")]
@@ -2260,7 +2235,7 @@ class SettingsWindow:
                 variable=self.display_mode, value=value,
                 command=update_display_mode
             )
-            radio.grid(row=6 + i, column=0, sticky="w", padx=10, pady=2)
+            radio.grid(row=5 + i, column=0, sticky="w", padx=10, pady=2)
 
         self.sample_text = tk.StringVar(value=self.app.settings.get("sample_text", "Suki loves boba, naps, and head scratches UwU"))
 
@@ -2273,7 +2248,7 @@ class SettingsWindow:
             bg=self.bg_color.get(), 
             justify="center"
             )
-        self.sample_entry.grid(row=6 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
+        self.sample_entry.grid(row=5 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
 
         def update_sample_text(*args):
             self.sample_entry.config(
@@ -2288,7 +2263,6 @@ class SettingsWindow:
         self.stroke_color.trace_add("write", update_sample_text)
         self.bg_color.trace_add("write", update_sample_text)
 
-        self.dark_mode_var.trace("w", lambda *args: self.update_settings_immediately())
         self.font_var.trace("w", lambda *args: self.update_settings_immediately())
         self.font_size_var.trace("w", lambda *args: self.update_settings_immediately())
         self.display_mode.trace("w", lambda *args: self.update_settings_immediately())
@@ -2790,116 +2764,65 @@ class SukiTranslateApp:
 
     
     def apply_theme(self):
-        dark_mode = self.settings.get("dark_mode", False)
         always_on_top = self.settings.get("always_on_top", False)
         self.root.attributes('-topmost', always_on_top)
 
         style = ttk.Style()
         style.theme_use('default')
 
-        if dark_mode:
-            bg_color = "#2e2e2e"
-            active_bg = "#444444"
-            entry_bg = "#3c3c3c"
-            fg_color = "#ffffff"
-            text_bg = self.settings.get("custom_bg_color", "#000000")
-            text_fg = self.settings.get("custom_font_color", "#ffffff")
+        bg_color = THEME_BG_COLOR
+        active_bg = THEME_ACTIVE_BG
+        entry_bg = THEME_ENTRY_BG
+        fg_color = THEME_FG_COLOR
+        text_bg = self.settings.get("custom_bg_color", "#000000")
+        text_fg = self.settings.get("custom_font_color", "#ffffff")
 
-            style.map("TCheckbutton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TRadiobutton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TButton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TNotebook.Tab",
-                background=[("selected", active_bg)])
-            style.map('TCombobox',
-                fieldbackground=[('readonly', entry_bg)],
-                background=[('readonly', entry_bg)],
-                foreground=[('readonly', fg_color)],
-                selectbackground=[('readonly', active_bg)],
-                selectforeground=[('readonly', fg_color)],
-                arrowcolor=[('active', fg_color)]
-            )
-            self.root.option_add('*TCombobox*Listbox.background', entry_bg)
-            self.root.option_add('*TCombobox*Listbox.foreground', fg_color)
-            self.root.option_add('*TCombobox*Listbox.selectBackground', active_bg)
-            self.root.option_add('*TCombobox*Listbox.selectForeground', fg_color)
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.background', '#3c3c3c')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.troughColor', '#2e2e2e')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeBackground', '#444444')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightBackground', '#2e2e2e')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.borderWidth', '0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.selectBackground', '#444444')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.foreground', '#ffffff')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeForeground', '#ffffff')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.relief', 'flat')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightThickness', '0')
-            self.root.option_add('*Scrollbar.background', '#3c3c3c')
-            self.root.option_add('*Scrollbar.troughColor', '#2e2e2e')
-            self.root.option_add('*Scrollbar.activeBackground', '#444444')
-            self.root.option_add('*Scrollbar.foreground', '#ffffff')
-            self.root.option_add('*Scrollbar.activeForeground', '#ffffff')
-            self.root.option_add('*Scrollbar.relief', 'flat')
-            self.root.option_add('*Scrollbar.borderWidth', '0')
-            style.map('TSpinbox',
-                fieldbackground=[('readonly', entry_bg), ('active', active_bg)],
-                background=[('readonly', entry_bg), ('active', active_bg)],
-                foreground=[('readonly', fg_color), ('active', fg_color)],
-                arrowcolor=[('active', fg_color)]
-            )
-
-
-        else:
-            bg_color = "#f0f0f0"
-            fg_color = "#000000"
-            entry_bg = "#ffffff"
-            active_bg = "#d9d9d9"
-            text_bg = "#ffffff"
-            text_fg = "#000000"
-
-            style.map("TCheckbutton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TRadiobutton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TButton",
-                background=[("active", active_bg)],
-                foreground=[("active", fg_color)])
-            style.map("TNotebook.Tab",
-                background=[("selected", active_bg)])
-            style.map('TCombobox',
-                fieldbackground=[('readonly', entry_bg)],
-                background=[('readonly', entry_bg)],
-                foreground=[('readonly', fg_color)],
-                selectbackground=[('readonly', active_bg)],
-                selectforeground=[('readonly', fg_color)],
-                arrowcolor=[('active', fg_color)]
-            )
-            self.root.option_add('*TCombobox*Listbox.background', entry_bg)
-            self.root.option_add('*TCombobox*Listbox.foreground', fg_color)
-            self.root.option_add('*TCombobox*Listbox.selectBackground', active_bg)
-            self.root.option_add('*TCombobox*Listbox.selectForeground', fg_color)
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.background', '#e1e1e1')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.troughColor', '#f0f0f0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeBackground', '#d0d0d0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightBackground', '#f0f0f0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.borderWidth', '0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.selectBackground', '#d0d0d0')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.foreground', '#000000')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.activeForeground', '#000000')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.relief', 'flat')
-            self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightThickness', '0')
-            style.map('TSpinbox',
-                fieldbackground=[('readonly', '#3c3c3c'), ('active', '#444444')],
-                background=[('readonly', '#3c3c3c'), ('active', '#444444')],
-                foreground=[('readonly', '#ffffff'), ('active', '#ffffff')],
-                arrowcolor=[('active', '#ffffff')]
-            )
+        style.map("TCheckbutton",
+            background=[("active", active_bg)],
+            foreground=[("active", fg_color)])
+        style.map("TRadiobutton",
+            background=[("active", active_bg)],
+            foreground=[("active", fg_color)])
+        style.map("TButton",
+            background=[("active", active_bg)],
+            foreground=[("active", fg_color)])
+        style.map("TNotebook.Tab",
+            background=[("selected", active_bg)])
+        style.map('TCombobox',
+            fieldbackground=[('readonly', entry_bg)],
+            background=[('readonly', entry_bg)],
+            foreground=[('readonly', fg_color)],
+            selectbackground=[('readonly', active_bg)],
+            selectforeground=[('readonly', fg_color)],
+            arrowcolor=[('active', fg_color)]
+        )
+        self.root.option_add('*TCombobox*Listbox.background', entry_bg)
+        self.root.option_add('*TCombobox*Listbox.foreground', fg_color)
+        self.root.option_add('*TCombobox*Listbox.selectBackground', active_bg)
+        self.root.option_add('*TCombobox*Listbox.selectForeground', fg_color)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.background', THEME_SCROLLBAR_BG)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.troughColor', THEME_SCROLLBAR_TROUGH)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.activeBackground', THEME_ACTIVE_BG)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightBackground', THEME_SCROLLBAR_TROUGH)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.borderWidth', '0')
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.selectBackground', THEME_ACTIVE_BG)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.foreground', fg_color)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.activeForeground', fg_color)
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.relief', 'flat')
+        self.root.option_add('*TCombobox*Listbox*Scrollbar.highlightThickness', '0')
+        self.root.option_add('*Scrollbar.background', THEME_SCROLLBAR_BG)
+        self.root.option_add('*Scrollbar.troughColor', THEME_SCROLLBAR_TROUGH)
+        self.root.option_add('*Scrollbar.activeBackground', THEME_ACTIVE_BG)
+        self.root.option_add('*Scrollbar.foreground', fg_color)
+        self.root.option_add('*Scrollbar.activeForeground', fg_color)
+        self.root.option_add('*Scrollbar.relief', 'flat')
+        self.root.option_add('*Scrollbar.borderWidth', '0')
+        style.map('TSpinbox',
+            fieldbackground=[('readonly', entry_bg), ('active', active_bg)],
+            background=[('readonly', entry_bg), ('active', active_bg)],
+            foreground=[('readonly', fg_color), ('active', fg_color)],
+            arrowcolor=[('active', fg_color)]
+        )
 
         self.theme_values = {
             'bg_color': bg_color,
