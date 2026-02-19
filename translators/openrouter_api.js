@@ -23,17 +23,19 @@ async function translate(input) {
             temperature: TEMPERATURE,
             max_tokens: MAX_TOKENS,
             messages: [{
-                role: "system",
-                content: prompt
-            }, {
-                role: "user",
-                content: [{
-                    type: "image_url",
-                    image_url: {
-                        url: `data:image/png;base64,${image}`
-                    }
-                }]
-            }]
+                    role: "user",
+                    content: [{
+                            type: "text",
+                            text: prompt
+                        },{
+                            type: "image_url",
+                            image_url: {
+                                url: `data:image/png;base64,${image}`
+                            }
+                        }
+                    ]
+                }
+            ]
         };
 
         const response = await fetch(API_URL, {
@@ -59,17 +61,6 @@ async function translate(input) {
     }
 }
 
-async function getTranslatedText(text, sourceLang, targetLang) {
-    try {
-        const translatedText = await translate(text, sourceLang, targetLang);
-        return translatedText;
-    } catch (error) {
-        console.error(`Error translating text: ${error}`);
-        throw error;
-    }
-}
-
 module.exports = {
-    getTranslatedText,
-    translateImage
+    translate
 };

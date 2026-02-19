@@ -1,14 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font, colorchooser
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageColor
 from PIL import Image as PILImage
 import mss
-import pytesseract
 import os
 import json
 import subprocess
 import requests
-from spylls.hunspell import Dictionary
 import sys
 import keyboard
 import threading
@@ -18,6 +16,7 @@ import io
 import win32clipboard
 import win32api
 import win32con
+import win32gui
 import cv2
 import numpy as np
 from fontTools.ttLib import TTFont
@@ -33,7 +32,7 @@ import ctypes
 import colorsys
 
 APP_NAME = "Suki Translate"
-VERSION = "1.8.1"
+VERSION = "1.9.0"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 THEME_BG_COLOR = "#2e2e2e"
@@ -44,6 +43,26 @@ THEME_SCROLLBAR_BG = "#3c3c3c"
 THEME_SCROLLBAR_TROUGH = "#2e2e2e"
 THEME_SCROLLBAR_ACTIVE = "#555555"
 THEME_SCROLLBAR_ARROW = "#ffffff"
+
+def enable_windows_dark_context_menus():
+    """Best-effort: ask Windows to render native context menus in dark mode."""
+    if sys.platform != "win32":
+        return False
+
+    try:
+        uxtheme = ctypes.WinDLL("uxtheme")
+        set_preferred_app_mode = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int)(135, uxtheme)
+        flush_menu_themes = ctypes.WINFUNCTYPE(None)(136, uxtheme)
+
+        # 2 = ForceDark (undocumented Windows API; works on many Win10/11 builds)
+        set_preferred_app_mode(2)
+        flush_menu_themes()
+        return True
+    except Exception:
+        return False
+
+# Must run as early as possible on Windows (before creating Tk windows).
+WINDOWS_DARK_MENU_ENABLED = enable_windows_dark_context_menus()
 
 class CustomTitleBar:
     def __init__(self, parent_window, title="Suki Translate", app_ref=None, show_minimize=True, show_maximize=True, show_close=True, use_system_titlebar=False, allow_resize=True):
@@ -353,21 +372,24 @@ class CustomTitleBar:
         except:
             pass
 
-        def create_rainbow_canvas(parent, text="S u k i T r a n s la t e", font=("ZFVCutiegirl", 11, "bold"), bg="#2b2b2b", speed=50):
+        def create_rainbow_canvas(parent, text="Suki Translate", font_spec=("ZFVCutiegirl", 11, "bold"), bg="#2b2b2b", speed=50):
             canvas = tk.Canvas(parent, bg=bg, highlightthickness=0)
             canvas.pack(expand=True, fill="both")
 
             hue = 0.0
+            tk_font = font.Font(font=font_spec)
 
             def draw_text():
                 nonlocal hue
                 canvas.delete("all")
 
-                for i, ch in enumerate(reversed(text)):
-                    offset = (hue + i * 0.01) % 1.0
+                x_pos = 20
+                for i, ch in enumerate(text):
+                    offset = (hue + i * -0.01) % 1.0
                     r, g, b = [int(255 * v) for v in colorsys.hsv_to_rgb(offset, 1, 1)]
                     color = f'#{r:02x}{g:02x}{b:02x}'
-                    canvas.create_text(20 + (len(text) - i - 1) * 5, 20, text=ch, fill=color, font=font, anchor="w")
+                    canvas.create_text(x_pos, 20, text=ch, fill=color, font=tk_font, anchor="w")
+                    x_pos += tk_font.measure(ch)
 
                 hue = (hue + 0.02) % 1.0
                 canvas.after(speed, draw_text)
@@ -375,7 +397,7 @@ class CustomTitleBar:
             draw_text()
             return canvas
 
-        canvas = create_rainbow_canvas(self.mini_bar, text="S u k i T r a n s la t e")
+        canvas = create_rainbow_canvas(self.mini_bar, text="Suki Translate")
 
         canvas.bind("<Button-1>", self.start_move)
         canvas.bind("<B1-Motion>", self.do_move)
@@ -490,20 +512,8 @@ os.makedirs(APPDATA_DIR, exist_ok=True)
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-HUNSPELL_DIR = os.path.join(APPDATA_DIR, 'hunspell')
-os.makedirs(HUNSPELL_DIR, exist_ok=True)
-
-TESSDATA_DIR = os.path.join(APPDATA_DIR, 'tessdata')
-os.makedirs(TESSDATA_DIR, exist_ok=True)
-
 TRANSLATORS_DIR = os.path.join(APPDATA_DIR, 'translators')
 os.makedirs(TRANSLATORS_DIR, exist_ok=True)
-
-TESSERACT_DIR = os.path.join(PROJECT_DIR, "Tesseract-OCR", "tesseract.exe")
-if not os.path.exists(TESSERACT_DIR):
-    messagebox.showerror("Error", f"Tesseract.exe not found at: {TESSERACT_DIR}. Please check the path.")
-    exit()
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_DIR
 
 NODE_MODULES_DIR = os.path.join(APPDATA_DIR, 'node_modules')            
 
@@ -713,99 +723,6 @@ def exit(server_socket):
         except:
             break
         
-def download_traineddata(lang_code):
-    tessdata_url = f"https://github.com/tesseract-ocr/tessdata/raw/main/{lang_code}.traineddata"
-    local_path = os.path.join(TESSDATA_DIR, f"{lang_code}.traineddata")
-    
-    try:
-        print(f"Downloading {lang_code}.traineddata...")
-        response = requests.get(tessdata_url, stream=True)
-        response.raise_for_status()
-        with open(local_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"Successfully downloaded {lang_code}.traineddata")
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading {lang_code}.traineddata: {e}")
-        return False
-    except Exception as e:
-        print(f"Error downloading {lang_code}.traineddata: {e}")
-        return False
-
-def get_available_dictionaries():
-    try:
-        response = requests.get("https://api.github.com/repos/wooorm/dictionaries/contents/dictionaries")
-        response.raise_for_status()
-        return [item['name'] for item in response.json() if item['type'] == 'dir']
-    except Exception as e:
-        print(f"Error fetching available dictionaries: {e}")
-        return ['en', 'vi'] 
-
-def download_hunspell_dict(lang_code):
-    short_lang_code = lang_code.split('_')[0].lower()
-    aff_path = os.path.join(HUNSPELL_DIR, f"{lang_code}.aff")
-    dic_path = os.path.join(HUNSPELL_DIR, f"{lang_code}.dic")
-    if os.path.exists(aff_path) and os.path.exists(dic_path):
-        return (aff_path, dic_path)
-    base_url = "https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries"
-    aff_url = f"{base_url}/{short_lang_code}/index.aff"
-    dic_url = f"{base_url}/{short_lang_code}/index.dic"
-    try:
-        print(f"Downloading Hunspell {lang_code}...")
-        response = requests.get(aff_url)
-        response.raise_for_status()
-        with open(aff_path, 'wb') as f:
-            f.write(response.content)
-        response = requests.get(dic_url)
-        response.raise_for_status()
-        with open(dic_path, 'wb') as f:
-            f.write(response.content)
-            
-        print(f"Successfully downloaded Hunspell {lang_code}")
-        return (aff_path, dic_path)
-        
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            print(f"Dictionary {lang_code} does not exist in the repository")
-        else:
-            print(f"Error downloading Hunspell dictionary {lang_code}: {e}")
-        return None
-    except Exception as e:
-        print(f"Error downloading Hunspell dictionary {lang_code}: {e}")
-        return None
-
-def check_spelling(text, lang_code='en'):
-    short_lang_code = lang_code.split('_')[0] if '_' in lang_code else lang_code
-    dict_paths = download_hunspell_dict(short_lang_code)
-    if not dict_paths:
-        print(f"No dictionary found for language {lang_code}, skipping spell check")
-        return True, [] 
-    aff_path, dic_path = dict_paths
-    try:
-        dict_name = dic_path.replace('.dic', '')
-        hobj = Dictionary.from_files(dict_name)
-    except Exception as e:
-        print(f"Error loading dictionary {lang_code}: {e}")
-        return True, []
-    
-    words = text.split()
-    misspelled = []
-    for word in words:
-        clean_word = word.strip('.,!?()[]{}"\'').lower()
-        if clean_word and not hobj.lookup(clean_word):
-            misspelled.append(word)
-    
-    return len(misspelled) == 0, misspelled
-
-def copy_original_text(text):
-    try:
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
-    finally:
-        win32clipboard.CloseClipboard()
-
 def copy_translated_text(text):
     try:
         win32clipboard.OpenClipboard()
@@ -849,18 +766,35 @@ def find_font_path(font_name):
     return None
 
 def wrap_text(text, font, max_width):
+    if text is None:
+        return [""]
+
     lines = []
-    words = text.split()
-    current_line = ""
-    for word in words:
-        bbox = font.getbbox(current_line + word)
-        width = bbox[2] - bbox[0]
-        if width <= max_width:
-            current_line += word + " "
-        else:
-            lines.append(current_line)
-            current_line = word + " "
-    lines.append(current_line)
+    for raw_line in text.splitlines():
+        if raw_line == "":
+            lines.append("")
+            continue
+
+        words = raw_line.split()
+        if not words:
+            lines.append("")
+            continue
+
+        current_line = words[0]
+        for word in words[1:]:
+            candidate = f"{current_line} {word}"
+            bbox = font.getbbox(candidate)
+            width = bbox[2] - bbox[0]
+            if width <= max_width:
+                current_line = candidate
+            else:
+                lines.append(current_line)
+                current_line = word
+        lines.append(current_line)
+
+    if not lines:
+        lines.append(text.strip() if isinstance(text, str) else "")
+
     return lines
 
 def set_startup(enabled):
@@ -881,76 +815,6 @@ def set_startup(enabled):
     except Exception as e:
         print(f"Error modifying startup: {e}")
         return False
-
-def prepare_image(image):
-    img_array = np.array(image)
-    return Image.fromarray(img_array)
-
-class SpellChecker:
-    def __init__(self):
-        self.current_dict = None
-        self.current_lang = None
-
-    def get_dict_for_language(self, lang_name):
-        if lang_name in LANGUAGE_MAPPING:
-            return LANGUAGE_MAPPING[lang_name]["code"]
-        return None
-
-    def download_dictionary(self, lang_code):
-        short_lang_code = lang_code.split('_')[0]
-        base_url = "https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries"
-        aff_url = f"{base_url}/{short_lang_code}/index.aff"
-        dic_url = f"{base_url}/{short_lang_code}/index.dic"
-        try:
-            os.makedirs(os.path.join(HUNSPELL_DIR, lang_code), exist_ok=True)
-            aff_path = os.path.join(HUNSPELL_DIR, lang_code, f"{lang_code}.aff")
-            if not os.path.exists(aff_path):
-                response = requests.get(aff_url)
-                response.raise_for_status()
-                with open(aff_path, 'wb') as f:
-                    f.write(response.content)
-            dic_path = os.path.join(HUNSPELL_DIR, lang_code, f"{lang_code}.dic")
-            if not os.path.exists(dic_path):
-                response = requests.get(dic_url)
-                response.raise_for_status()
-                with open(dic_path, 'wb') as f:
-                    f.write(response.content)
-            return True
-        except Exception as e:
-            print(f"Error downloading dictionary {lang_code}: {e}")
-            return False
-
-    def load_dictionary_for_language(self, lang_name):
-        lang_code = self.get_dict_for_language(lang_name)
-        if not lang_code:
-            self.current_dict = None
-            self.current_lang = None
-            return False
-        dict_code = f"{lang_code}_US" if lang_code == "en" else lang_code      
-        dict_path = os.path.join(HUNSPELL_DIR, dict_code, dict_code)     
-        if not os.path.exists(f"{dict_path}.aff") or not os.path.exists(f"{dict_path}.dic"):
-            if not self.download_dictionary(dict_code):
-                return False
-        
-        try:
-            self.current_dict = Dictionary.from_files(dict_path)
-            self.current_lang = dict_code
-            return True
-        except Exception as e:
-            print(f"Error loading dictionary {dict_code}: {e}")
-            return False
-    
-    def check_spelling(self, text):
-        if not self.current_dict:
-            return True, []
-        words = text.split()
-        misspelled = []
-        for word in words:
-            clean_word = ''.join(c for c in word if c.isalpha())
-            if clean_word and not self.current_dict.lookup(clean_word):
-                misspelled.append(clean_word)
-        
-        return len(misspelled) == 0, misspelled
 
 class UpdateChecker:
     def __init__(self, app_ref):
@@ -1336,8 +1200,6 @@ class SettingsManager:
             "run_at_startup": False,
             "sample_text": "Suki loves boba, naps, and head scratches UwU",
             "minimize_to_tray": False,
-            "ocr_mode": "AI",
-            "auto_copy_original_clipboard": False,
             "auto_copy_clipboard": False,
             "auto_check_updates": True,
             "run_as_admin": True,
@@ -1386,6 +1248,8 @@ class TranslatorManager:
                     'path': os.path.join(TRANSLATORS_DIR, file),
                     'enabled': False
                 }
+        if self.active_translator and self.active_translator not in self.translators:
+            self.active_translator = None
     
     def set_active_translator(self, translator_name):
         if translator_name not in self.translators:
@@ -1398,13 +1262,16 @@ class TranslatorManager:
     def get_active_translator(self):
         if not self.active_translator:
             return None
+        if self.active_translator not in self.translators:
+            self.active_translator = None
+            return None
         return self.translators[self.active_translator]
     
     def get_translator_list(self):
         return list(self.translators.keys())
 
 class SettingsWindow:
-    def __init__(self, app, translator_manager, spell_checker):
+    def __init__(self, app, translator_manager):
         self.app = app
         self.translator_manager = translator_manager
         self.window = tk.Toplevel(app.root)
@@ -1458,10 +1325,79 @@ class SettingsWindow:
         self.setup_about_tab()
 
         self.notebook.pack(expand=True, fill="both")
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_notebook_tab_changed)
 
         active_trans = self.translator_manager.active_translator
         if active_trans:
             self.load_and_set_translator_params(active_trans)
+
+    def _get_translators_signature(self):
+        signature = []
+        try:
+            for filename in sorted(os.listdir(TRANSLATORS_DIR)):
+                if not filename.endswith(".js"):
+                    continue
+                file_path = os.path.join(TRANSLATORS_DIR, filename)
+                try:
+                    stat_info = os.stat(file_path)
+                except OSError:
+                    continue
+                signature.append((filename, int(stat_info.st_mtime), stat_info.st_size))
+        except Exception as e:
+            print(f"Error building translators signature: {e}")
+        return tuple(signature)
+
+    def _sync_active_translator_after_reload(self):
+        active_from_settings = self.app.settings.get("active_translator")
+        if active_from_settings and active_from_settings in self.translator_manager.translators:
+            self.translator_manager.set_active_translator(active_from_settings)
+            return
+
+        self.translator_manager.active_translator = None
+        if self.app.settings.get("active_translator") is not None:
+            self.app.settings["active_translator"] = None
+            self.app.settings_manager.save_settings(self.app.settings)
+        self.reset_translator_params_ui()
+
+    def on_notebook_tab_changed(self, event):
+        try:
+            selected_tab = event.widget.select()
+            selected_text = event.widget.tab(selected_tab, "text")
+        except tk.TclError:
+            return
+
+        if selected_text == "Translators":
+            self.refresh_translator_tab_if_needed()
+
+    def rebuild_translator_tab(self):
+        tab_index = 1
+        try:
+            tab_index = self.notebook.index(self.translator_frame)
+        except tk.TclError:
+            pass
+
+        try:
+            if hasattr(self, "translator_frame") and self.translator_frame.winfo_exists():
+                self.translator_frame.destroy()
+        except tk.TclError:
+            pass
+
+        self.translator_frame = ttk.Frame(self.notebook)
+        self.notebook.insert(tab_index, self.translator_frame, text="Translators")
+        self.setup_translator_tab()
+        self.notebook.select(self.translator_frame)
+
+    def refresh_translator_tab_if_needed(self, force=False):
+        current_signature = self._get_translators_signature()
+        previous_signature = getattr(self, "_translators_signature", None)
+
+        if not force and current_signature == previous_signature:
+            return
+
+        self.translator_manager.load_translators()
+        self._sync_active_translator_after_reload()
+        self.rebuild_translator_tab()
+        self._translators_signature = current_signature
 
     def setup_general_tab(self):
         hotkey_row = ttk.Frame(self.general_frame)
@@ -1517,15 +1453,6 @@ class SettingsWindow:
 
         minimize_to_tray_chk.grid(row=4, column=0, sticky="w", padx=10, pady=5)
 
-        self.auto_copy_original_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_original_clipboard", False))
-        self.auto_copy_original_clipboard_chk = ttk.Checkbutton(
-            self.general_frame,
-            text="Auto save Original Text to clipboard (Tesseract)",
-            variable=self.auto_copy_original_clipboard_var,
-            command=self.update_general_settings
-        )
-        self.auto_copy_original_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
-
         self.auto_copy_clipboard_var = tk.BooleanVar(value=self.app.settings.get("auto_copy_clipboard", False))
         auto_copy_clipboard_chk = ttk.Checkbutton(
             self.general_frame,
@@ -1533,7 +1460,7 @@ class SettingsWindow:
             variable=self.auto_copy_clipboard_var,
             command=self.update_general_settings
         )
-        auto_copy_clipboard_chk.grid(row=6, column=0, sticky="w", padx=10, pady=5)
+        auto_copy_clipboard_chk.grid(row=5, column=0, sticky="w", padx=10, pady=5)
 
         self.auto_check_updates_var = tk.BooleanVar(value=self.app.settings.get("auto_check_updates", True))
         auto_check_updates_chk = ttk.Checkbutton(
@@ -1542,10 +1469,10 @@ class SettingsWindow:
             variable=self.auto_check_updates_var,
             command=self.update_general_settings
         )
-        auto_check_updates_chk.grid(row=7, column=0, sticky="w", padx=10, pady=5)
+        auto_check_updates_chk.grid(row=6, column=0, sticky="w", padx=10, pady=5)
         
         update_button_frame = ttk.Frame(self.general_frame)
-        update_button_frame.grid(row=8, column=0, sticky="w", padx=10, pady=5)
+        update_button_frame.grid(row=7, column=0, sticky="w", padx=10, pady=5)
         
         ttk.Button(
             update_button_frame,
@@ -1564,22 +1491,8 @@ class SettingsWindow:
         self.always_on_top_var.trace("w", lambda *args: self.update_general_settings())
         self.run_at_startup_var.trace("w", lambda *args: self.update_general_settings())
         self.minimize_to_tray_var.trace("w", lambda *args: self.update_general_settings())
-        self.auto_copy_original_clipboard_var.trace("w", lambda *args: self.update_general_settings())
         self.auto_copy_clipboard_var.trace("w", lambda *args: self.update_general_settings())
         self.auto_check_updates_var.trace("w", lambda *args: self.update_general_settings())
-
-
-        ocr_frame = ttk.Frame(self.general_frame)
-        ocr_frame.grid(row=9, column=0, sticky="w", padx=10, pady=5)
-        ttk.Label(ocr_frame, text="OCR Mode:").grid(row=0, column=0, sticky="w")
-        
-        self.ocr_mode_var = tk.StringVar(value=self.app.settings.get("ocr_mode", "tesseract"))
-        ttk.Radiobutton(ocr_frame, text="Tesseract", variable=self.ocr_mode_var, value="Tesseract").grid(row=0, column=1, sticky="w", padx=5)
-        ttk.Radiobutton(ocr_frame, text="AI Recognition", variable=self.ocr_mode_var, value="AI").grid(row=0, column=2, sticky="w", padx=5)
-        
-        self.ocr_mode_var.trace("w", lambda *args: self.update_ocr_mode_dependent_settings())
-        
-        self.update_ocr_mode_dependent_settings()
         
     def manual_update_check(self):
         threading.Thread(target=lambda: self.app.update_checker.check_for_updates(show_no_update_message=True), daemon=True).start()
@@ -1677,24 +1590,12 @@ class SettingsWindow:
                 messagebox.showerror("Error", f"Failed to restart as admin: {e}")
 
 
-    def update_ocr_mode_dependent_settings(self):
-        self.update_general_settings()
-        
-        ocr_mode = self.ocr_mode_var.get()
-        if ocr_mode == "Tesseract":
-            self.auto_copy_original_clipboard_chk.config(state="normal")
-        else:
-            self.auto_copy_original_clipboard_chk.config(state="disabled")
-            self.auto_copy_original_clipboard_var.set(False)
-
     def update_general_settings(self):
         new_settings = self.app.settings.copy()
         new_settings["hotkey"] = self.hotkey_var.get()
         new_settings["always_on_top"] = self.always_on_top_var.get()
         new_settings["run_at_startup"] = self.run_at_startup_var.get()
         new_settings["minimize_to_tray"] = self.minimize_to_tray_var.get()
-        new_settings["ocr_mode"] = self.ocr_mode_var.get()
-        new_settings["auto_copy_original_clipboard"] = self.auto_copy_original_clipboard_var.get()
         new_settings["auto_copy_clipboard"] = self.auto_copy_clipboard_var.get()
         new_settings["auto_check_updates"] = self.auto_check_updates_var.get()
         
@@ -1853,26 +1754,37 @@ class SettingsWindow:
         self.max_tokens_var.set(2000)
 
     def setup_translator_tab(self):
+        self._translators_signature = self._get_translators_signature()
         list_frame = ttk.Frame(self.translator_frame)
         list_frame.pack(pady=10, padx=10, fill="both", expand=True)
         
-        update_btn = ttk.Button(list_frame, text="🔄 Update translators from GitHub", command=self.update_translators_from_github)
-        update_btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
+        button_row = ttk.Frame(list_frame)
+        button_row.grid(row=0, column=0, columnspan=4, sticky="ew", pady=5)
+        button_row.columnconfigure(0, weight=1)
+        button_row.columnconfigure(1, weight=0)
+        button_row.columnconfigure(2, weight=0)
+        button_row.columnconfigure(3, weight=0)
 
-        open_folder_btn = ttk.Button(list_frame, text="📂 Open folder", command=self.open_translators_folder)
-        open_folder_btn.grid(row=0, column=2, sticky="e", pady=5, padx=(0, 100))
+        update_btn = ttk.Button(button_row, text=" Update translators from GitHub ", command=self.update_translators_from_github)
+        update_btn.grid(row=0, column=0, sticky="w")
 
-        save_btn = ttk.Button(list_frame, text="💾 Save", command=self.save_active_translator_specific_params)
-        save_btn.grid(row=0, column=2, sticky="e", pady=5, padx=(0, 10))
+        refresh_btn = ttk.Button(button_row, text="Refresh list", command=self.refresh_translator_list, width=14)
+        refresh_btn.grid(row=0, column=1, sticky="e", padx=(8, 0))
+
+        open_folder_btn = ttk.Button(button_row, text="Open folder", command=self.open_translators_folder, width=12)
+        open_folder_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
+
+        save_btn = ttk.Button(button_row, text="Save", command=self.save_active_translator_specific_params, width=10)
+        save_btn.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
         ttk.Label(list_frame, text="Prompt:").grid(row=1, column=0, sticky="w", pady=5)
         prompt_entry = ttk.Entry(list_frame, textvariable=self.prompt_var, width=50)
-        prompt_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10))
+        prompt_entry.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 10))
 
         ttk.Label(list_frame, text="Model:").grid(row=2, column=0, sticky="w", pady=5)
         self.model_var = tk.StringVar(value="")
         model_entry = ttk.Entry(list_frame, textvariable=self.model_var, width=50)
-        model_entry.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(0, 10))
+        model_entry.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(0, 10))
 
         ttk.Label(list_frame, text="Temperature:").grid(row=3, column=0, sticky="w", pady=5)
         temperature_entry = ttk.Entry(list_frame, textvariable=self.temperature_var, width=10)
@@ -1886,11 +1798,12 @@ class SettingsWindow:
         ttk.Label(list_frame, text="API Key").grid(row=5, column=2, sticky="w", pady=5)
 
         scrollable_frame = ttk.Frame(list_frame)
-        scrollable_frame.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=5)
+        scrollable_frame.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=5)
         
         list_frame.rowconfigure(6, weight=1)
         list_frame.columnconfigure(1, weight=1)
         list_frame.columnconfigure(2, weight=1)
+        list_frame.columnconfigure(3, weight=0)
 
         translators_count = len(self.translator_manager.get_translator_list())
         max_visible_rows = 8
@@ -2239,29 +2152,172 @@ class SettingsWindow:
 
         self.sample_text = tk.StringVar(value=self.app.settings.get("sample_text", "Suki loves boba, naps, and head scratches UwU"))
 
-        self.sample_entry = tk.Entry(
-            self.display_tab, 
-            textvariable=self.sample_text, 
-            font=(self.font_var.get(), 
-            self.font_size_var.get()), 
-            fg=self.font_color.get(), 
-            bg=self.bg_color.get(), 
-            justify="center"
-            )
-        self.sample_entry.grid(row=5 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
+        self.sample_preview_canvas = tk.Canvas(
+            self.display_tab,
+            height=36,
+            highlightthickness=1,
+            highlightbackground="#808080",
+            bd=0
+        )
+        self.sample_preview_canvas.grid(row=5 + len(modes), column=0, columnspan=2, sticky="ew", padx=10, pady=(20, 10))
+        self._sample_preview_editing = False
+        self._sample_preview_backup_text = ""
+        self.sample_preview_editor = tk.Entry(self.display_tab, textvariable=self.sample_text, justify="center", bd=0)
 
-        def update_sample_text(*args):
-            self.sample_entry.config(
-                font=(self.font_var.get(), self.font_size_var.get()),
+        def _get_safe_font(family_name, size_value):
+            try:
+                return font.Font(family=family_name, size=max(8, int(size_value)))
+            except tk.TclError:
+                return font.Font(family="Arial", size=max(8, int(size_value)))
+
+        def _hex_to_rgb(color_value):
+            color_value = color_value.lstrip("#")
+            if len(color_value) != 6:
+                return (128, 128, 128)
+            return tuple(int(color_value[i:i + 2], 16) for i in (0, 2, 4))
+
+        def _rgb_to_hex(rgb_value):
+            r, g, b = rgb_value
+            return f"#{r:02x}{g:02x}{b:02x}"
+
+        def _blend_color(base_hex, overlay_hex, ratio):
+            ratio = max(0.0, min(1.0, float(ratio)))
+            br, bg, bb = _hex_to_rgb(base_hex)
+            or_, og, ob = _hex_to_rgb(overlay_hex)
+            mixed = (
+                int(br + (or_ - br) * ratio),
+                int(bg + (og - bg) * ratio),
+                int(bb + (ob - bb) * ratio),
+            )
+            return _rgb_to_hex(mixed)
+
+        def _render_text_with_stroke(canvas_widget, x_pos, y_pos, text_value, font_obj, fg_color, stroke_color_value):
+            stroke_offsets = [
+                (-2, 0), (2, 0), (0, -2), (0, 2),
+                (-1, 0), (1, 0), (0, -1), (0, 1),
+                (-1, -1), (-1, 1), (1, -1), (1, 1)
+            ]
+            for dx, dy in stroke_offsets:
+                canvas_widget.create_text(
+                    x_pos + dx,
+                    y_pos + dy,
+                    text=text_value,
+                    fill=stroke_color_value,
+                    font=font_obj,
+                    anchor="center",
+                    justify="center"
+                )
+            canvas_widget.create_text(
+                x_pos,
+                y_pos,
+                text=text_value,
+                fill=fg_color,
+                font=font_obj,
+                anchor="center",
+                justify="center"
+            )
+
+        def finish_sample_preview_edit(event=None, commit=True):
+            if not self._sample_preview_editing:
+                return "break"
+            if not commit:
+                self.sample_text.set(self._sample_preview_backup_text)
+            self.sample_preview_editor.place_forget()
+            self._sample_preview_editing = False
+            update_sample_preview()
+            return "break"
+
+        def start_sample_preview_edit(event=None):
+            self._sample_preview_backup_text = self.sample_text.get()
+            self._sample_preview_editing = True
+            editor_font = _get_safe_font(self.font_var.get(), self.font_size_var.get())
+            self.sample_preview_editor.configure(
+                font=editor_font,
                 fg=self.font_color.get(),
-                bg=self.bg_color.get()
+                bg=self.sample_preview_canvas.cget("bg"),
+                insertbackground=self.font_color.get()
             )
+            self.sample_preview_editor.place(in_=self.sample_preview_canvas, x=1, y=1, relwidth=1.0, relheight=1.0, width=-2, height=-2)
+            self.sample_preview_editor.focus_set()
+            self.sample_preview_editor.select_range(0, tk.END)
+            self.sample_preview_editor.icursor(tk.END)
+            return "break"
 
-        self.font_var.trace_add("write", update_sample_text)
-        self.font_size_var.trace_add("write", update_sample_text)
-        self.font_color.trace_add("write", update_sample_text)
-        self.stroke_color.trace_add("write", update_sample_text)
-        self.bg_color.trace_add("write", update_sample_text)
+        def update_sample_preview(*args):
+            canvas = self.sample_preview_canvas
+            if self._sample_preview_editing:
+                editor_font = _get_safe_font(self.font_var.get(), self.font_size_var.get())
+                self.sample_preview_editor.configure(
+                    font=editor_font,
+                    fg=self.font_color.get(),
+                    bg=canvas.cget("bg"),
+                    insertbackground=self.font_color.get()
+                )
+                return
+            canvas.delete("all")
+
+            mode = self.display_mode.get()
+            sample = self.sample_text.get()
+            if not sample:
+                sample = " "
+
+            preview_bg_gray = getattr(self.app, "theme_values", {}).get("bg_color", THEME_BG_COLOR)
+            preview_bg = self.bg_color.get() if mode == "manual" else preview_bg_gray
+
+            canvas.configure(bg=preview_bg)
+            canvas.update_idletasks()
+            width = max(1, canvas.winfo_width())
+            height = max(1, canvas.winfo_height())
+            center_x = width // 2
+            center_y = height // 2
+
+            main_font = _get_safe_font(self.font_var.get(), self.font_size_var.get())
+            arial_font = _get_safe_font("Arial", self.font_size_var.get())
+            fg_color = self.font_color.get()
+            stroke = self.stroke_color.get()
+
+            if mode == "blur":
+                arial_blur_color = "#ffffff"
+                canvas.create_text(center_x, center_y, text=sample, fill=arial_blur_color, font=arial_font, anchor="center", justify="center")
+                blur_color_outer = _blend_color(preview_bg, arial_blur_color, 0.16)
+                blur_color_inner = _blend_color(preview_bg, arial_blur_color, 0.28)
+                for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2), (-2, -1), (2, 1), (-1, 2), (1, -2)]:
+                    canvas.create_text(
+                        center_x + dx,
+                        center_y + dy,
+                        text=sample,
+                        fill=blur_color_outer,
+                        font=arial_font,
+                        anchor="center",
+                        justify="center"
+                    )
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    canvas.create_text(
+                        center_x + dx,
+                        center_y + dy,
+                        text=sample,
+                        fill=blur_color_inner,
+                        font=arial_font,
+                        anchor="center",
+                        justify="center"
+                    )
+                _render_text_with_stroke(canvas, center_x, center_y, sample, main_font, fg_color, stroke)
+            else:
+                _render_text_with_stroke(canvas, center_x, center_y, sample, main_font, fg_color, stroke)
+
+        self.sample_preview_canvas.bind("<Configure>", update_sample_preview)
+        self.sample_preview_canvas.bind("<Button-1>", start_sample_preview_edit)
+        self.sample_preview_editor.bind("<Return>", lambda e: finish_sample_preview_edit(e, commit=True))
+        self.sample_preview_editor.bind("<KP_Enter>", lambda e: finish_sample_preview_edit(e, commit=True))
+        self.sample_preview_editor.bind("<FocusOut>", lambda e: finish_sample_preview_edit(e, commit=True))
+        self.sample_preview_editor.bind("<Escape>", lambda e: finish_sample_preview_edit(e, commit=False))
+        self.font_var.trace_add("write", update_sample_preview)
+        self.font_size_var.trace_add("write", update_sample_preview)
+        self.font_color.trace_add("write", update_sample_preview)
+        self.stroke_color.trace_add("write", update_sample_preview)
+        self.bg_color.trace_add("write", update_sample_preview)
+        self.display_mode.trace_add("write", update_sample_preview)
+        self.sample_text.trace_add("write", update_sample_preview)
 
         self.font_var.trace("w", lambda *args: self.update_settings_immediately())
         self.font_size_var.trace("w", lambda *args: self.update_settings_immediately())
@@ -2272,6 +2328,7 @@ class SettingsWindow:
         self.sample_text.trace("w", lambda *args: self.update_settings_immediately())
 
         update_display_mode()
+        update_sample_preview()
 
     def validate_fontsize(self, new_value):
         if new_value == "":
@@ -2307,11 +2364,10 @@ class SettingsWindow:
     def update_translators_from_github(self):
         if self.update_translator_files():
             self.show_custom_info_dialog("Done", "Translators updated successfully!")
-            self.translator_manager.load_translators()
-            self.translator_frame.destroy()
-            self.translator_frame = ttk.Frame(self.notebook)
-            self.notebook.insert(1, self.translator_frame, text="Translators")
-            self.setup_translator_tab()
+            self.refresh_translator_tab_if_needed(force=True)
+
+    def refresh_translator_list(self):
+        self.refresh_translator_tab_if_needed(force=True)
 
     def setup_about_tab(self):
         about_frame = ttk.Frame(self.about_frame)
@@ -2319,7 +2375,7 @@ class SettingsWindow:
 
         ttk.Label(about_frame, text=APP_NAME, font=("Arial", 16, "bold")).pack(anchor="center", pady=5)
 
-        description = "OCR Tesseract character recognition tool and AI-powered translation"
+        description = "AI-powered text recognition and translation tool"
         ttk.Label(about_frame, text=description, wraplength=400, justify="center").pack(anchor="center", pady=10)
 
         ttk.Label(about_frame, text=f"Version: {VERSION}").pack(anchor="center", pady=5)
@@ -2370,7 +2426,6 @@ class SukiTranslateApp:
 
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load_settings()
-        self.spell_checker = SpellChecker()
         self.apply_theme()
         
         self.custom_title_bar = CustomTitleBar(self.root, APP_NAME, app_ref=self, show_maximize=False, allow_resize=False)
@@ -2380,6 +2435,8 @@ class SukiTranslateApp:
         self.translator_manager = TranslatorManager()
         
         self.x1 = self.y1 = self.x2 = self.y2 = None
+        self.overlay = None
+        self.overlay_canvas = None
         self.full_screen_img = None
         self.rect = None
         
@@ -2387,6 +2444,9 @@ class SukiTranslateApp:
         self.console_window = None
         self.console_log_text_widget = None
         self.tray_icon = None
+        self.tray_hwnd = None
+        self.tray_menu_window = None
+        self._tray_message_id = win32con.WM_USER + 20
 
         self.main_frame = ttk.Frame(root)
         self.main_frame.pack(fill="both", expand=True)
@@ -2490,6 +2550,10 @@ class SukiTranslateApp:
         self.system_tray_icon()
         
     def system_tray_icon(self):
+        if sys.platform == "win32":
+            self._start_custom_windows_tray()
+            return
+
         if self.tray_icon and hasattr(self, '_tray_thread_started') and self._tray_thread_started:
             return
         
@@ -2527,7 +2591,145 @@ class SukiTranslateApp:
             threading.Thread(target=run_tray, daemon=True).start()
             self._tray_thread_started = True
 
+    def _start_custom_windows_tray(self):
+        if self.tray_hwnd is not None:
+            return
+        if hasattr(self, '_tray_thread_started') and self._tray_thread_started:
+            return
+
+        def tray_thread():
+            class_name = "SukiTranslateTrayWindow"
+            message_id = self._tray_message_id
+
+            def wnd_proc(hwnd, msg, wparam, lparam):
+                if msg == message_id:
+                    if lparam == win32con.WM_RBUTTONUP:
+                        x, y = win32gui.GetCursorPos()
+                        self.root.after(1, lambda xx=x, yy=y: self.show_custom_tray_menu(xx, yy))
+                    elif lparam == win32con.WM_LBUTTONDBLCLK:
+                        self.root.after(1, self.show_window_from_tray)
+                    return 0
+                if msg == win32con.WM_CLOSE:
+                    try:
+                        nid = (hwnd, 0)
+                        win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, nid)
+                    except Exception:
+                        pass
+                    win32gui.DestroyWindow(hwnd)
+                    return 0
+                if msg == win32con.WM_DESTROY:
+                    win32gui.PostQuitMessage(0)
+                    return 0
+                return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+            wc = win32gui.WNDCLASS()
+            wc.hInstance = win32api.GetModuleHandle(None)
+            wc.lpszClassName = class_name
+            wc.lpfnWndProc = wnd_proc
+            try:
+                win32gui.RegisterClass(wc)
+            except Exception:
+                pass
+
+            hwnd = win32gui.CreateWindow(
+                class_name,
+                APP_NAME,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                wc.hInstance,
+                None
+            )
+            self.tray_hwnd = hwnd
+
+            try:
+                hicon = win32gui.LoadImage(
+                    0,
+                    ICON_DIR,
+                    win32con.IMAGE_ICON,
+                    0,
+                    0,
+                    win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
+                )
+            except Exception:
+                hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+
+            flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
+            nid = (hwnd, 0, flags, message_id, hicon, APP_NAME)
+            win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
+
+            try:
+                win32gui.PumpMessages()
+            finally:
+                self.tray_hwnd = None
+                self._tray_thread_started = False
+
+        threading.Thread(target=tray_thread, daemon=True).start()
+        self._tray_thread_started = True
+
+    def _stop_custom_windows_tray(self):
+        if self.tray_hwnd is None:
+            return
+        try:
+            win32gui.PostMessage(self.tray_hwnd, win32con.WM_CLOSE, 0, 0)
+        except Exception:
+            pass
+        self.tray_hwnd = None
+
+    def show_custom_tray_menu(self, x, y):
+        self.hide_custom_tray_menu()
+
+        menu = tk.Toplevel(self.root)
+        menu.overrideredirect(True)
+        menu.attributes("-topmost", True)
+        menu.configure(bg="#1f1f1f")
+
+        border = tk.Frame(menu, bg="#404040", bd=1)
+        border.pack(fill="both", expand=True)
+        body = tk.Frame(border, bg="#1f1f1f")
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+
+        def add_item(text, callback):
+            lbl = tk.Label(body, text=text, bg="#1f1f1f", fg="#e8e8e8", padx=14, pady=7, anchor="w", font=("Arial", 9))
+            lbl.pack(fill="x")
+            lbl.bind("<Enter>", lambda e: lbl.configure(bg="#2f2f2f"))
+            lbl.bind("<Leave>", lambda e: lbl.configure(bg="#1f1f1f"))
+            lbl.bind("<Button-1>", lambda e: (self.hide_custom_tray_menu(), callback()))
+            return lbl
+
+        add_item("Show", self.show_window_from_tray)
+        add_item("Settings", self.open_settings_from_tray)
+        add_item("Exit", self.quit_application_from_tray)
+
+        menu.update_idletasks()
+        sw = menu.winfo_screenwidth()
+        sh = menu.winfo_screenheight()
+        mw = menu.winfo_reqwidth()
+        mh = menu.winfo_reqheight()
+        x = max(0, min(int(x), sw - mw))
+        y = max(0, min(int(y), sh - mh))
+        menu.geometry(f"+{x}+{y}")
+
+        menu.bind("<FocusOut>", lambda e: self.hide_custom_tray_menu())
+        menu.bind("<Escape>", lambda e: self.hide_custom_tray_menu())
+        menu.focus_force()
+        self.tray_menu_window = menu
+
+    def hide_custom_tray_menu(self):
+        if hasattr(self, "tray_menu_window") and self.tray_menu_window:
+            try:
+                if self.tray_menu_window.winfo_exists():
+                    self.tray_menu_window.destroy()
+            except Exception:
+                pass
+        self.tray_menu_window = None
+
     def show_window_from_tray(self):
+        self.hide_custom_tray_menu()
         tb = None
         if hasattr(self, 'custom_title_bars'):
             for t in self.custom_title_bars:
@@ -2561,9 +2763,11 @@ class SukiTranslateApp:
                 print(f"[show_window_from_tray] fallback failed: {e2}")
 
     def open_settings_from_tray(self):
+        self.hide_custom_tray_menu()
         self.root.after(1, self.open_settings)
 
     def quit_application_from_tray(self):
+        self.hide_custom_tray_menu()
         self.root.after(1, self.quit_application)
 
     def quit_application(self):
@@ -2572,12 +2776,16 @@ class SukiTranslateApp:
         if hasattr(self, 'original_stderr') and self.original_stderr:
             sys.stderr = self.original_stderr
         
-        if self.tray_icon:
-            try:
-                self.tray_icon.stop()
-            except:
-                pass
-            self.tray_icon = None
+        self.hide_custom_tray_menu()
+        if sys.platform == "win32":
+            self._stop_custom_windows_tray()
+        else:
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except:
+                    pass
+                self.tray_icon = None
         
         if hasattr(self, '_tray_thread_started'):
             self._tray_thread_started = False
@@ -2920,7 +3128,7 @@ class SukiTranslateApp:
             else:
                 del self.settings_window
 
-        self.settings_window = SettingsWindow(self, self.translator_manager, self.spell_checker)
+        self.settings_window = SettingsWindow(self, self.translator_manager)
         self.settings_window.window.protocol("WM_DELETE_WINDOW", self.on_settings_window_close)
 
     def on_settings_window_close(self):
@@ -3053,21 +3261,29 @@ class SukiTranslateApp:
     def _set_focus_with_delay(self):
 
         try:
-            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+            overlay = getattr(self, 'overlay', None)
+            overlay_canvas = getattr(self, 'overlay_canvas', None)
 
-                self.overlay.focus_force()
-                self.overlay_canvas.focus_force()
+            if (
+                overlay and overlay.winfo_exists() and
+                overlay_canvas and overlay_canvas.winfo_exists()
+            ):
+
+                overlay.focus_force()
+                overlay_canvas.focus_force()
 
                 try:
-                    self.overlay.grab_set()
+                    overlay.grab_set()
                 except tk.TclError as e:
                     print(f"Warning: Could not set grab: {e}")
                     try:
-                        self.overlay.grab_set_global()
+                        overlay.grab_set_global()
                     except tk.TclError as e2:
                         print(f"Warning: Could not set global grab either: {e2}")
             else:
                 print("Overlay no longer exists - skipping focus setup")
+        except tk.TclError as e:
+            print(f"Overlay already destroyed during focus setup: {e}")
         except Exception as e:
             print(f"Critical error in _set_focus_with_delay: {e}")
 
@@ -3107,6 +3323,7 @@ class SukiTranslateApp:
                     pass
             
         self.overlay = None
+        self.overlay_canvas = None
         self.rect = None
         
         try:
@@ -3125,8 +3342,11 @@ class SukiTranslateApp:
         return "break"
     
     def on_focus_lost(self, event=None):
-        if hasattr(self, 'overlay') and self.overlay:
-            self.overlay.after(1000, self._check_focus_and_cancel)
+        try:
+            if hasattr(self, 'overlay') and self.overlay and self.overlay.winfo_exists():
+                self.overlay.after(1000, self._check_focus_and_cancel)
+        except tk.TclError:
+            pass
     
     def _check_focus_and_cancel(self):
 
@@ -3168,6 +3388,12 @@ class SukiTranslateApp:
             self.rect = self.overlay_canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2, outline="red", width=1)
 
     def on_mouse_up(self, event):
+        if self.x1 is None or self.y1 is None or self.full_screen_img is None:
+            return
+
+        if not hasattr(self, 'overlay_canvas') or self.overlay_canvas is None:
+            return
+
         x1l, y1l = self.x1, self.y1
         x2l, y2l = event.x, event.y
         x1l, x2l = min(x1l, x2l), max(x1l, x2l)
@@ -3203,59 +3429,32 @@ class SukiTranslateApp:
         self.x2 = x2p
         self.y2 = y2p
 
+        selection_w = abs(x2p - x1p)
+        selection_h = abs(y2p - y1p)
+        if selection_w < 2 or selection_h < 2:
+            print(f"Skipping tiny capture area: {selection_w}x{selection_h}")
+            self.captured_image = None
+            return
+
         self.captured_image = self.full_screen_img.crop((x1p, y1p, x2p, y2p))
+        capture_coords = (x1p, y1p, x2p, y2p)
+        captured_image = self.captured_image
+        threading.Thread(
+            target=self.perform_translation,
+            args=(captured_image, capture_coords),
+            daemon=True
+        ).start()
 
-        threading.Thread(target=self.perform_translation).start()
-
-    def perform_translation(self):
+    def perform_translation(self, captured_image=None, capture_coords=None):
         try:
-            if self.captured_image is None:
+            if captured_image is None:
+                captured_image = self.captured_image
+
+            if captured_image is None:
                 messagebox.showerror("Error", "Please capture an area first.")
                 return
 
-            captured_image = self.captured_image
-
-            
-
-            ocr_mode = self.settings.get("ocr_mode", "tesseract")
-            if ocr_mode == "Tesseract":
-                extracted_text = self.extract_text_from_image(captured_image)
-                self.last_extracted_text = extracted_text
-
-                if not extracted_text.strip():
-                    messagebox.showinfo("Info", "No text detected in selected area.")
-                    return
-
-                selected_lang = self.source_lang_combo.get()
-                if selected_lang in LANGUAGE_MAPPING:
-                    self.spell_checker.load_dictionary_for_language(selected_lang)
-
-                if self.spell_checker.current_dict:
-                    is_correct, misspelled = self.spell_checker.check_spelling(extracted_text)
-
-                active_translator = self.translator_manager.get_active_translator()
-                if not active_translator:
-                    messagebox.showerror("Error", "No translator is enabled. Please enable one in Settings.")
-                    return
-
-                self.translated_input_text = extracted_text
-                print(f"--- Extracted OCR Text -----------------------------------------------\n{extracted_text}")
-
-                if self.settings.get("auto_copy_original_clipboard", False):
-                    try:
-                        copy_original_text(extracted_text)
-                    except Exception as clipboard_error:
-                        print(f"Error auto-copying original text to clipboard: {clipboard_error}")
-
-                translated_text = self.translate_with_api(
-                    extracted_text,
-                    self.source_lang_combo.get(),
-                    self.target_lang_combo.get(),
-                    active_translator['path']
-                )
-            elif ocr_mode == "AI":
-                translated_text = self.extract_text_with_ai(captured_image)
-                self.last_extracted_text = translated_text
+            translated_text = self.translate(captured_image)
 
             if not translated_text.strip():
                 messagebox.showinfo("Info", "No text detected or translated in selected area.")
@@ -3270,39 +3469,16 @@ class SukiTranslateApp:
                 except Exception as clipboard_error:
                     print(f"Error auto-copying to clipboard: {clipboard_error}")
 
-            self.display_translation_overlay(translated_text)
+            self.display_translation_overlay(
+                translated_text,
+                capture_coords=capture_coords,
+                captured_image=captured_image
+            )
 
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {e}")
-
-    def extract_text_from_image(self, image):
-        lang_name = self.source_lang_combo.get()
-        if lang_name in LANGUAGE_MAPPING:
-            self.spell_checker.load_dictionary_for_language(lang_name)
-        lang_data = LANGUAGE_MAPPING.get(lang_name, LANGUAGE_MAPPING["English"])
-        tess_code = lang_data["tess_code"]
-
-        traineddata_path = os.path.join(TESSDATA_DIR, f"{tess_code}.traineddata")
-        if not os.path.exists(traineddata_path):
-            if not download_traineddata(tess_code):
-                messagebox.showerror("Error", f"Could not download language file for {lang_name}")
-                return ""
-
-        try:
-            processed_image = prepare_image(image)
-
-            os.environ['TESSDATA_PREFIX'] = TESSDATA_DIR
-            text = pytesseract.image_to_string(
-                processed_image,
-                lang=tess_code,
-                config=f'--tessdata-dir {os.path.normpath(TESSDATA_DIR)} --psm 6'
-            )
-            return text.strip()
-        except Exception as e:
-            print(f"OCR Error: {e}")
-            return ""
         
-    def extract_text_with_ai(self, image):
+    def translate(self, image):
         try:
             active_translator = self.translator_manager.get_active_translator()
             if not active_translator:
@@ -3334,7 +3510,7 @@ class SukiTranslateApp:
             node_command = (
                 f'"{NODE_DIR}" -e "'
                 f'const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
-                f'translator.translateImage('
+                f'translator.translate('
                 f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\')'
                 f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
             )
@@ -3356,56 +3532,32 @@ class SukiTranslateApp:
         except Exception as e:
             print(f"AI Translation Error: {e}")
             return ""
-        
-    def translate_with_api(self, text, source_lang, target_lang, translator_path):
+
+
+    def display_translation_overlay(self, text, capture_coords=None, captured_image=None):
         try:
-            temp_input = os.path.join(PROJECT_DIR, "temp_input.txt")
-            with open(temp_input, "w", encoding="utf-8") as f:
-                f.write(text)
-            
-            temp_output = os.path.join(PROJECT_DIR, "temp_output.txt")
-            
-            node_command = (
-                f'"{NODE_DIR}" -e "'
-                f'const translator = require(\'{translator_path.replace(os.sep, "/")}\'); '
-                f'translator.getTranslatedText('
-                f'require(\'fs\').readFileSync(\'{temp_input.replace(os.sep, "/")}\', \'utf-8\'), '
-                f'\'{source_lang}\', \'{target_lang}\''
-                f').then(result => require(\'fs\').writeFileSync(\'{temp_output.replace(os.sep, "/")}\', result));"'
-            )
-            
-            result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                raise Exception(f"Node.js error: {result.stderr}")
-            
-            with open(temp_output, "r", encoding="utf-8") as f:
-                translated_text = f.read()
-            
-            os.remove(temp_input)
-            os.remove(temp_output)
-            
-            return translated_text
-            
-        except Exception as e:
-            print(f"Translation API Error: {e}")
-            return None
+            if capture_coords is None:
+                if None in (self.x1, self.y1, self.x2, self.y2):
+                    print("Skipping overlay: capture coordinates are not available")
+                    return
+                x1, y1, x2, y2 = self.x1, self.y1, self.x2, self.y2
+            else:
+                x1, y1, x2, y2 = capture_coords
 
+            if captured_image is None:
+                captured_image = self.captured_image
+            if captured_image is None:
+                print("Skipping overlay: captured image is not available")
+                return
 
+            capture_width = abs(x2 - x1)
+            capture_height = abs(y2 - y1)
 
-    def display_translation_overlay(self, text):
-        try:
-            if self.current_overlay is not None and self.current_overlay.winfo_exists():
-                self.current_overlay.destroy()
-
-            capture_width = abs(self.x2 - self.x1)
-            capture_height = abs(self.y2 - self.y1)
-                        
-            capture_width = max(100, capture_width)
-            capture_height = max(50, capture_height)
+            capture_width = max(1, capture_width)
+            capture_height = max(1, capture_height)
             
-            overlay_x = min(self.x1, self.x2)
-            overlay_y = min(self.y1, self.y2)
+            overlay_x = min(x1, x2)
+            overlay_y = min(y1, y2)
 
             font_name = self.settings.get("result_font", "Arial")
             font_size = self.settings.get("result_font_size", 12)
@@ -3413,13 +3565,35 @@ class SukiTranslateApp:
             stroke_color = self.settings.get("custom_stroke_color", "#000000")
             bg_color = self.settings.get("custom_bg_color", "#000000")
 
-            overlay = tk.Toplevel(self.root)
-            overlay.overrideredirect(True)
-            overlay.withdraw()
-            overlay.attributes('-topmost', True)
+            overlay = None
+            try:
+                if self.current_overlay is not None and self.current_overlay.winfo_exists():
+                    overlay = self.current_overlay
+            except tk.TclError:
+                self.current_overlay = None
+
+            if overlay is None:
+                overlay = tk.Toplevel(self.root)
+                overlay.withdraw()
+                overlay.overrideredirect(True)
+                overlay.attributes('-topmost', True)
+                try:
+                    overlay.attributes('-alpha', 0.0)
+                except tk.TclError:
+                    pass
+                self.current_overlay = overlay
+            else:
+                try:
+                    overlay.withdraw()
+                except tk.TclError:
+                    pass
+
             overlay.configure(bg=bg_color)
-            
-            overlay.geometry("1x1-10000-10000")
+            for child in overlay.winfo_children():
+                try:
+                    child.destroy()
+                except tk.TclError:
+                    pass
 
             display_mode = self.settings.get("display_mode")
             font_path = find_font_path(font_name)
@@ -3428,57 +3602,44 @@ class SukiTranslateApp:
                 print(f"Font {font_name} not found, using arial.ttf")
             
             final_width = capture_width
-            final_height = capture_height            
-           
+            final_height = capture_height
+            wrap_width = max(20, capture_width - 20)
+            text_padding_x = 10
+            text_padding_y = 10
+
+            try:
+                dpi = float(self.root.winfo_fpixels('1i'))
+            except Exception:
+                dpi = 96.0
+            pil_font_size = max(8, int(round(float(font_size) * dpi / 72.0)))
+
+            try:
+                font_for_draw = ImageFont.truetype(font_path, pil_font_size)
+            except Exception:
+                font_for_draw = ImageFont.load_default()
+
+            lines = wrap_text(text, font_for_draw, wrap_width)
+            if not lines:
+                lines = [text]
+            try:
+                sample_bbox = font_for_draw.getbbox("Ag")
+                base_line_height = max(1, sample_bbox[3] - sample_bbox[1])
+            except Exception:
+                base_line_height = max(1, getattr(font_for_draw, "size", 12))
+            stroke_width = 2
+            line_spacing = max(4, int(round(base_line_height * 0.22)))
+            line_height = base_line_height + (stroke_width * 2) + line_spacing
+            text_total_height = len(lines) * line_height
+            required_text_height = text_total_height + (text_padding_y * 2)
+            final_height = max(capture_height, required_text_height)
+            
             if display_mode == "blur":
-                img_pil = self.captured_image.convert("RGB")
-                img_pil = img_pil.resize((capture_width, capture_height), Image.LANCZOS)
-                img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-                img_cv2 = cv2.GaussianBlur(img_cv2, (55, 55), 0)
-
-                mask = np.zeros(img_cv2.shape[:2], dtype=np.uint8)
-                cv2.rectangle(mask, (0, 0), (capture_width, capture_height), 255, -1)
-
-                inpainted_img = cv2.inpaint(img_cv2, mask, inpaintRadius=1, flags=cv2.INPAINT_TELEA)
-                inpainted_img_pil = Image.fromarray(cv2.cvtColor(inpainted_img, cv2.COLOR_BGR2RGB))
-                draw = ImageDraw.Draw(inpainted_img_pil)
-                
-                current_font_size = font_size * 1.3
-                while True:
-                    try:
-                        font = ImageFont.truetype(font_path, current_font_size)
-                    except:
-                        font = ImageFont.load_default()
-                    lines = wrap_text(text, font, capture_width - 20)
-                    total_text_height = len(lines) * font.size
-
-                    if total_text_height <= capture_height:
-                        break  
-                    else:
-                        current_font_size -= 1
-                        if current_font_size < 8:
-                            break
-
-                total_text_height = len(lines) * font.size
-                y = (capture_height - total_text_height) / 2
-
-                for line in lines:
-                    bbox = draw.textbbox((0,0), line, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    x = (capture_width - text_width) / 2
-                    draw.text((x, y), line, font=font, fill=font_color, stroke_width=2, stroke_fill=stroke_color)
-                    y += font.size
-
-                self.tk_img = ImageTk.PhotoImage(inpainted_img_pil)
-                label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
-                label.image = self.tk_img
+                label = tk.Label(overlay, bd=0, highlightthickness=0)
                 final_width = capture_width
-                final_height = capture_height
-                print(f"Blur mode: final dimensions {final_width}x{final_height} match crop area")
 
 
             elif display_mode == "auto":
-                img_pil = self.captured_image.convert("RGB")
+                img_pil = captured_image.convert("RGB")
                 img_pil = img_pil.resize((capture_width, capture_height), Image.LANCZOS)
                 img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
                 height, width, _ = img_cv2.shape
@@ -3489,42 +3650,21 @@ class SukiTranslateApp:
                 right_color = img_cv2[height // 2, -1]
                 avg_color = tuple(map(int, np.mean([top_color, bottom_color, left_color, right_color], axis=0)))
 
-                bg_img = np.full_like(img_cv2, avg_color, dtype=np.uint8)
+                bg_img = np.full((final_height, capture_width, 3), avg_color, dtype=np.uint8)
                 bg_pil = Image.fromarray(cv2.cvtColor(bg_img, cv2.COLOR_BGR2RGB))
                 draw = ImageDraw.Draw(bg_pil)
 
-                current_font_size = font_size * 1.3
-                while True:
-                    try:
-                        font = ImageFont.truetype(font_path, current_font_size)
-                    except:
-                        font = ImageFont.load_default()
-                    lines = wrap_text(text, font, capture_width - 20)
-                    total_text_height = len(lines) * font.size
-
-                    if total_text_height <= capture_height:
-                        break
-                    else:
-                        current_font_size -= 1
-                        if current_font_size < 8:
-                            break
-
-                total_text_height = len(lines) * font.size
-                y = (capture_height - total_text_height) / 2
+                y = text_padding_y
 
                 for line in lines:
-                    bbox = draw.textbbox((0,0), line, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    x = (capture_width - text_width) / 2
-                    draw.text((x, y), line, font=font, fill=font_color, stroke_width=2, stroke_fill=stroke_color)
-                    y += font.size
+                    x = text_padding_x
+                    draw.text((x, y), line, font=font_for_draw, fill=font_color, stroke_width=stroke_width, stroke_fill=stroke_color)
+                    y += line_height
 
                 self.tk_img = ImageTk.PhotoImage(bg_pil)
                 label = tk.Label(overlay, image=self.tk_img, bd=0, highlightthickness=0)
                 label.image = self.tk_img
                 final_width = capture_width
-                final_height = capture_height
-                print(f"Auto mode: final dimensions {final_width}x{final_height} match crop area")
 
             else:
                 label = tk.Label(
@@ -3533,26 +3673,23 @@ class SukiTranslateApp:
                     font=(font_name, font_size),
                     fg=font_color,
                     bg=bg_color,
-                    wraplength=capture_width - 20,
+                    wraplength=wrap_width,
                     justify="left",
                     padx=10,
-                    pady=10
+                    pady=10,
+                    anchor="nw"
                 )
                 label.pack()
                 overlay.update_idletasks()
-                final_height = label.winfo_reqheight()
+                final_height = max(capture_height, label.winfo_reqheight())
                 final_width = capture_width
                 label.pack_forget()
-            label.pack(fill="both", expand=True)
-            overlay.update_idletasks()
+            if display_mode != "blur":
+                label.pack(fill="both", expand=True)
+                overlay.update_idletasks()
             
-            display_mode = self.settings.get("display_mode")
-            if display_mode not in ["blur", "auto"]:
-                final_width = max(100, final_width)
-                final_height = max(50, final_height)
-            else:
-                final_width = max(1, final_width)
-                final_height = max(1, final_height)
+            final_width = max(1, final_width)
+            final_height = max(1, final_height)
             
             try:
                 import mss
@@ -3581,36 +3718,109 @@ class SukiTranslateApp:
                 screen_height = overlay.winfo_screenheight()
                 overlay_x = max(0, min(overlay_x, screen_width - final_width))
                 overlay_y = max(0, min(overlay_y, screen_height - final_height))
-            
+
+            if display_mode == "blur":
+                try:
+                    with mss.mss() as sct:
+                        monitor = {
+                            "left": int(overlay_x),
+                            "top": int(overlay_y),
+                            "width": int(final_width),
+                            "height": int(final_height)
+                        }
+                        grabbed = sct.grab(monitor)
+                        screen_img = Image.frombytes("RGB", (monitor["width"], monitor["height"]), grabbed.bgra, "raw", "BGRX")
+
+                    img_cv2 = cv2.cvtColor(np.array(screen_img), cv2.COLOR_RGB2BGR)
+                    img_cv2 = cv2.GaussianBlur(img_cv2, (55, 55), 0)
+                    blur_bg = Image.fromarray(cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB))
+                except Exception as e:
+                    print(f"Error building blur background from screen: {e}")
+                    blur_bg = Image.new("RGB", (final_width, final_height), color="#2e2e2e")
+
+                draw = ImageDraw.Draw(blur_bg)
+                y = text_padding_y
+                for line in lines:
+                    x = text_padding_x
+                    draw.text((x, y), line, font=font_for_draw, fill=font_color, stroke_width=stroke_width, stroke_fill=stroke_color)
+                    y += line_height
+
+                self.tk_img = ImageTk.PhotoImage(blur_bg)
+                label.configure(image=self.tk_img)
+                label.image = self.tk_img
+                label.pack(fill="both", expand=True)
+                overlay.update_idletasks()
+             
             overlay.geometry(f"{final_width}x{final_height}+{overlay_x}+{overlay_y}")
 
-            context_menu = tk.Menu(overlay, tearoff=0)
-            is_ai_mode = self.settings.get("ocr_mode", "tesseract") == "AI"
-            context_menu.add_command(
-                label="Copy Original Text",
-                command=lambda: copy_original_text(self.last_extracted_text),
-                state="disabled" if is_ai_mode else "normal"
-            )
-            context_menu.add_command(
-                label="Copy Result Text",
-                command=lambda: copy_translated_text(text)
-            )
-            context_menu.add_command(
-                label="Copy Image",
-                command=lambda: copy_image(self.captured_image)
-            )
-            context_menu.add_command(
-                label="Edit",
-                command=lambda: self.open_edit_window(),
-                state="disabled" if is_ai_mode else "normal"
-            )
+            result_menu_window = None
+            opening_context_menu = False
 
-            def show_context_menu(event): 
-                context_menu.post(event.x_root, event.y_root)
+            def hide_context_menu():
+                nonlocal result_menu_window
+                if result_menu_window is not None:
+                    try:
+                        if result_menu_window.winfo_exists():
+                            result_menu_window.destroy()
+                    except tk.TclError:
+                        pass
+                    result_menu_window = None
+
+            def show_context_menu(event):
+                nonlocal result_menu_window, opening_context_menu
+                hide_context_menu()
+                opening_context_menu = True
+
+                menu = tk.Toplevel(overlay)
+                menu.overrideredirect(True)
+                menu.attributes("-topmost", True)
+                menu.configure(bg="#1f1f1f")
+
+                border = tk.Frame(menu, bg="#404040", bd=1)
+                border.pack(fill="both", expand=True)
+                body = tk.Frame(border, bg="#1f1f1f")
+                body.pack(fill="both", expand=True, padx=1, pady=1)
+
+                def add_item(label_text, callback):
+                    item = tk.Label(body, text=label_text, bg="#1f1f1f", fg="#e8e8e8", padx=14, pady=7, anchor="w", font=("Arial", 9))
+                    item.pack(fill="x")
+                    item.bind("<Enter>", lambda e: item.configure(bg="#2f2f2f"))
+                    item.bind("<Leave>", lambda e: item.configure(bg="#1f1f1f"))
+                    item.bind("<Button-1>", lambda e: (hide_context_menu(), callback()))
+
+                add_item("Copy Result Text", lambda: copy_translated_text(text))
+                add_item("Copy Image", lambda: copy_image(captured_image))
+
+                menu.update_idletasks()
+                sw = menu.winfo_screenwidth()
+                sh = menu.winfo_screenheight()
+                mw = menu.winfo_reqwidth()
+                mh = menu.winfo_reqheight()
+                mx = max(0, min(int(event.x_root), sw - mw))
+                my = max(0, min(int(event.y_root), sh - mh))
+                menu.geometry(f"+{mx}+{my}")
+
+                menu.bind("<FocusOut>", lambda e: hide_context_menu())
+                menu.bind("<Escape>", lambda e: hide_context_menu())
+                result_menu_window = menu
+                menu.focus_force()
+                opening_context_menu = False
                 return "break"
+
             overlay.bind("<Button-3>", show_context_menu)
 
             def close_overlay(event=None): 
+                event_type_str = str(getattr(event, "type", "")) if event is not None else ""
+                if event is not None and ("FocusOut" in event_type_str or event_type_str == "10"):
+                    if opening_context_menu:
+                        return "break"
+                    if result_menu_window is not None:
+                        try:
+                            if result_menu_window.winfo_exists():
+                                return "break"
+                        except tk.TclError:
+                            pass
+                hide_context_menu()
                 if hasattr(self, '_mouse_hook_id') and self._mouse_hook_id:
                     try:
                         import win32gui
@@ -3618,8 +3828,12 @@ class SukiTranslateApp:
                         self._mouse_hook_id = None
                     except Exception as e:
                         print(f"Error removing mouse hook: {e}")
-                overlay.destroy()
-                
+                try:
+                    if overlay.winfo_exists():
+                        overlay.withdraw()
+                except tk.TclError:
+                    pass
+                 
             overlay.bind("<Escape>", close_overlay)
             overlay.bind("<Button-1>", close_overlay)
             label.bind("<Button-1>", close_overlay)
@@ -3630,146 +3844,14 @@ class SukiTranslateApp:
             overlay.focus_force()
             overlay.lift()
             overlay.attributes('-topmost', True)
-            
-            self.current_overlay = overlay
+            try:
+                overlay.attributes('-alpha', 1.0)
+            except tk.TclError:
+                pass
 
         except Exception as e:
             print(f"Error displaying translation overlay: {e}")
             messagebox.showerror("Error", f"Could not display translation: {e}")
-
-    def open_edit_window(self):
-        edit_window = tk.Toplevel(self.root)
-        edit_window.update_idletasks()
-        dpi_scale = edit_window.winfo_fpixels('1i') / 96.0
-        edit_window.geometry(f"{int(600 * dpi_scale * 96 / 100)}x{int(600 * dpi_scale * 96 / 100)}")
-        edit_window.resizable(True, True)
-        
-        self.edit_custom_title_bar = CustomTitleBar(edit_window, "Edit and Translate - Suki Translate", app_ref=self, show_maximize=True, use_system_titlebar=False)
-        try:
-            edit_window.iconbitmap(ICON_DIR)
-        except:
-            pass
-        
-        if hasattr(self, 'custom_title_bars'):
-            self.custom_title_bars.append(self.edit_custom_title_bar)
-        
-        self.edit_custom_title_bar.apply_theme(self.theme_values)
-
-        self.apply_theme()
-        theme = self.theme_values
-        edit_window.configure(bg=theme['bg_color'])
-
-        image_label = None
-        if self.captured_image:
-            max_img_size = (500, 300)
-            img = self.captured_image.copy()
-            img.thumbnail(max_img_size, Image.LANCZOS)
-            tk_img = ImageTk.PhotoImage(img)
-            image_label = tk.Label(edit_window, image=tk_img, bg=theme['bg_color'])
-            image_label.image = tk_img
-            image_label.pack(pady=5)
-
-        lang_frame = ttk.Frame(edit_window)
-        lang_frame.pack(fill="x", padx=10, pady=5)
-        lang_label = ttk.Label(lang_frame, text="Source Language:")
-        lang_label.pack(side="left")
-        sorted_languages = sorted(LANGUAGE_MAPPING.keys())
-        source_lang_combo = ttk.Combobox(lang_frame, values=sorted_languages, width=25)
-        source_lang_combo.set(self.source_lang_combo.get())
-        source_lang_combo.pack(side="left", padx=5)
-
-        target_lang_label = ttk.Label(lang_frame, text="Target Language:")
-        target_lang_label.pack(side="left", padx=5)
-        common_targets = sorted(LANGUAGE_MAPPING.keys())
-        target_lang_combo = ttk.Combobox(lang_frame, values=common_targets, width=25)
-        target_lang_combo.set(self.target_lang_combo.get())
-        target_lang_combo.pack(side="left", padx=5)
-
-        text_frame = ttk.Frame(edit_window)
-        text_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        text_widget = tk.Text(
-            text_frame,
-            height=10,
-            wrap="word",
-            bg=theme['entry_bg'],
-            fg=theme['fg_color'],
-            insertbackground=theme['fg_color'],
-            highlightbackground=theme['bg_color']
-        )
-        text_widget.insert("1.0", self.last_extracted_text or "")
-        text_widget.pack(fill="both", expand=True, padx=5)
-
-        def translate_edited_text():
-            edited_text = text_widget.get("1.0", tk.END).strip()
-            source_lang = source_lang_combo.get()
-            target_lang = target_lang_combo.get()
-            active_translator = self.translator_manager.get_active_translator()
-            
-            if not edited_text:
-                messagebox.showwarning("Warning", "Please enter text to translate.")
-                return
-            if not active_translator:
-                messagebox.showerror("Error", "No translator is enabled. Please enable one in Settings.")
-                return
-
-            translated_text = self.translate_with_api(
-                edited_text,
-                source_lang,
-                target_lang,
-                active_translator['path']
-            )
-            if translated_text:
-                self.last_extracted_text = edited_text
-                self.display_translation_overlay(translated_text)
-                edit_window.destroy()
-            else:
-                messagebox.showerror("Error", "Translation failed.")
-
-        translate_button = ttk.Button(edit_window, text="Translate", command=translate_edited_text)
-        translate_button.pack(pady=10)
-
-        self.edit_window = edit_window
-        self.edit_window_widgets = {
-            'image_label': image_label,
-            'text_widget': text_widget,
-            'lang_frame': lang_frame,
-        }
-
-        edit_window.attributes('-topmost', True)
-        edit_window.focus_force()
-
-        def on_edit_window_close():
-            if hasattr(self, 'custom_title_bars') and hasattr(self, 'edit_custom_title_bar') and self.edit_custom_title_bar in self.custom_title_bars:
-                self.custom_title_bars.remove(self.edit_custom_title_bar)
-            
-            if hasattr(self, 'edit_custom_title_bar'):
-                self.edit_custom_title_bar.cleanup()
-            
-            self.edit_window = None
-            self.edit_window_widgets = None
-            edit_window.destroy()
-
-        edit_window.protocol("WM_DELETE_WINDOW", on_edit_window_close)
-        edit_window._window_close_handler = on_edit_window_close
-
-    def update_edit_window_theme(self):
-        if not hasattr(self, 'edit_window') or not self.edit_window or not self.edit_window.winfo_exists():
-            return
-
-        self.apply_theme()
-        theme = self.theme_values
-
-        self.edit_window.configure(bg=theme['bg_color'])
-
-        widgets = self.edit_window_widgets
-        if widgets['image_label']:
-            widgets['image_label'].configure(bg=theme['bg_color'])
-        widgets['text_widget'].configure(
-            bg=theme['entry_bg'],
-            fg=theme['fg_color'],
-            insertbackground=theme['fg_color'],
-            highlightbackground=theme['bg_color']
-        )
 
 if __name__ == "__main__":
     if not os.path.exists(NODE_MODULES_DIR):

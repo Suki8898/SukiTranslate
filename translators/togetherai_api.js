@@ -59,18 +59,8 @@ async function translate(input) {
     }
 }
 
-async function getTranslatedText(text, sourceLang, targetLang) {
-    try {
-        const translatedText = await translate(text, sourceLang, targetLang);
-        return translatedText;
-    } catch (error) {
-        console.error(`Error translating text: ${error}`);
-        throw error;
-    }
-}
-
 module.exports = {
-    getTranslatedText,
-    translateImage
+    translate
 };
+
 
