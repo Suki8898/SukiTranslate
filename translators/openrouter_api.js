@@ -13,42 +13,7 @@ const TEMPERATURE = 0.5; // Controls the randomness of the output, lower values 
 const fs = require('fs');
 const fetch = require('node-fetch');
 
-async function translate(text, sourceLang, targetLang) {
-
-    const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
-
-    const requestBody = {
-        model: MODEL,
-        temperature: TEMPERATURE, 
-        max_tokens: MAX_TOKENS,
-        messages: [{
-            role: "system",
-            content: prompt
-            }, {
-            role: "user",
-            content: text
-        }] 
-    };
-
-const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
-        },
-        body: JSON.stringify(requestBody)
-    });
-
-    if (!response.ok) {
-        throw new Error(`API request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const translatedText = data.choices[0].message.content.trim();
-    return translatedText;
-}
-
-async function translateImage(input) {
+async function translate(input) {
     try {
         const { image, sourceLang, targetLang } = JSON.parse(input);
         const prompt = PROMPT.replace('SourceLang', sourceLang).replace('TargetLang', targetLang);
