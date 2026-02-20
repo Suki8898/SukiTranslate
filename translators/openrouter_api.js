@@ -2,7 +2,7 @@
 const API_KEY = 'YOUR_API_KEY_HERE';
 
 //Models and pricing https://openrouter.ai/models
-const MODEL = 'meta-llama/llama-3.3-8b-instruct:free';
+const MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
