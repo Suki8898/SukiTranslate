@@ -2,7 +2,7 @@
 const API_KEY = 'YOUR_API_KEY_HERE';
 
 // Models and pricing https://ai.google.dev/gemini-api/docs/models https://ai.google.dev/gemini-api/docs/pricing
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-2.5-flash';
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
 
@@ -85,3 +85,4 @@ async function translate(input) {
 module.exports = {
     translate
 };
+
