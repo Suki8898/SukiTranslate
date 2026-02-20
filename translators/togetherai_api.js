@@ -2,7 +2,7 @@
 const API_KEY = 'YOUR_API_KEY_HERE';
 
 // Models and pricing https://api.together.ai/models
-const MODEL = 'Qwen/Qwen2-VL-72B-Instruct';
+const MODEL = 'Qwen/Qwen3-VL-32B-Instruct';
 
 const API_URL = 'https://api.together.xyz/v1/chat/completions';
 
