@@ -1,8 +1,6 @@
 Pillow
 mss
-pytesseract
 requests
-spylls
 keyboard
 pystray
 pywin32
@@ -11,3 +9,4 @@ numpy
 fonttools
 plyer
 packaging
+PySide6
