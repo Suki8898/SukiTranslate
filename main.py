@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRect, QRectF, QThread, QPoint, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QAction, QColor, QFont, QMouseEvent, QKeySequence
 APP_NAME = "Suki Translate"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 THEME_BG_COLOR = "#2e2e2e"
@@ -1308,12 +1308,13 @@ class ResultWindow(QWidget):
 class ScreenCaptureOverlay(QWidget):
     capture_finished = Signal(int, int, int, int)
     
-    def __init__(self):
+    def __init__(self, bg_pixmap=None):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setCursor(Qt.CrossCursor)
         
+        self.bg_pixmap = bg_pixmap
         self.start_pos = None
         self.current_pos = None
         
@@ -1324,7 +1325,12 @@ class ScreenCaptureOverlay(QWidget):
         
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
+        
+        if self.bg_pixmap and not self.bg_pixmap.isNull():
+            painter.drawPixmap(0, 0, self.bg_pixmap)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
+        else:
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
         
         pen = painter.pen()
         pen.setColor(QColor(255, 255, 255))
@@ -1334,9 +1340,13 @@ class ScreenCaptureOverlay(QWidget):
         
         if self.start_pos and self.current_pos:
             rect = QRectF(self.start_pos, self.current_pos).normalized()
-            painter.setCompositionMode(QPainter.CompositionMode_Clear)
-            painter.fillRect(rect, Qt.transparent)
-            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            if self.bg_pixmap and not self.bg_pixmap.isNull():
+                painter.drawPixmap(rect, self.bg_pixmap, rect)
+            else:
+                painter.setCompositionMode(QPainter.CompositionMode_Clear)
+                painter.fillRect(rect, Qt.transparent)
+                painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+                
             painter.setPen(QColor(255, 255, 255))
             painter.drawRect(rect)
             
@@ -1557,14 +1567,34 @@ class SukiTranslateApp(QMainWindow):
         if self.capture_overlay:
             self.capture_overlay.hide()
             self.capture_overlay.deleteLater()
-        
-        self.capture_overlay = ScreenCaptureOverlay()
-        self.capture_overlay.capture_finished.connect(self.on_capture_finished)
-        
+            
         desktop_rect = QRect()
         for screen in QApplication.screens():
             desktop_rect = desktop_rect.united(screen.geometry())
             
+        bg_pixmap = None
+        self.full_desktop_image = None
+        try:
+            with mss.mss() as sct:
+                monitor = {
+                    "left": desktop_rect.left(),
+                    "top": desktop_rect.top(),
+                    "width": desktop_rect.width(),
+                    "height": desktop_rect.height()
+                }
+                grabbed = sct.grab(monitor)
+                self.full_desktop_image = Image.frombytes("RGB", (grabbed.width, grabbed.height), grabbed.bgra, "raw", "BGRX")
+                
+                output = io.BytesIO()
+                self.full_desktop_image.save(output, format="PNG")
+                bg_pixmap = QPixmap()
+                bg_pixmap.loadFromData(output.getvalue(), "PNG")
+        except Exception as e:
+            print(f"Error capturing full screen: {e}")
+        
+        self.capture_overlay = ScreenCaptureOverlay(bg_pixmap=bg_pixmap)
+        self.capture_overlay.capture_finished.connect(self.on_capture_finished)
+        
         self.capture_overlay.setGeometry(desktop_rect)
         self.capture_overlay.show()
         self.capture_overlay.activateWindow()
@@ -1575,10 +1605,18 @@ class SukiTranslateApp(QMainWindow):
             return
         
         try:
-            with mss.mss() as sct:
-                monitor = {"left": int(x), "top": int(y), "width": int(w), "height": int(h)}
-                grabbed = sct.grab(monitor)
-                img = Image.frombytes("RGB", (grabbed.width, grabbed.height), grabbed.bgra, "raw", "BGRX")
+            if hasattr(self, 'full_desktop_image') and self.full_desktop_image is not None:
+                desktop_rect = QRect()
+                for screen in QApplication.screens():
+                    desktop_rect = desktop_rect.united(screen.geometry())
+                rel_x = int(x - desktop_rect.left())
+                rel_y = int(y - desktop_rect.top())
+                img = self.full_desktop_image.crop((rel_x, rel_y, rel_x + int(w), rel_y + int(h)))
+            else:
+                with mss.mss() as sct:
+                    monitor = {"left": int(x), "top": int(y), "width": int(w), "height": int(h)}
+                    grabbed = sct.grab(monitor)
+                    img = Image.frombytes("RGB", (grabbed.width, grabbed.height), grabbed.bgra, "raw", "BGRX")
                 
             
             small_img = img.resize((64, 64), Image.Resampling.NEAREST)
