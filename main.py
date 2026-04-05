@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRect, QRectF, QThread, QPoint, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QAction, QColor, QFont, QMouseEvent, QKeySequence
 APP_NAME = "Suki Translate"
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 GITHUB_REPO_URL = "https://api.github.com/repos/Suki8898/SukiTranslate/releases/latest"
 
 THEME_BG_COLOR = "#2e2e2e"
@@ -25,7 +25,6 @@ THEME_SCROLLBAR_ACTIVE = "#555555"
 THEME_SCROLLBAR_ARROW = "#ffffff"
 
 def enable_windows_dark_context_menus():
-    """Best-effort: ask Windows to render native context menus in dark mode."""
     if sys.platform != "win32":
         return False
 
@@ -381,7 +380,9 @@ class SettingsManager:
                 "openai": {"api_key": "", "model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."},
                 "openrouter": {"api_key": "", "model": "nvidia/nemotron-nano-12b-v2-vl:free", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."},
                 "togetherai": {"api_key": "", "model": "Qwen/Qwen3-VL-32B-Instruct", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."},
-                "xai": {"api_key": "", "model": "grok-2-vision-1212", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."}
+                "xai": {"api_key": "", "model": "grok-2-vision-1212", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."},
+                "nvidia": {"api_key": "", "model": "google/gemma-4-31b-it", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation."},
+                "lmstudio": {"api_key": "not-needed", "model": "local-model", "temperature": 0.5, "max_tokens": 2000, "prompt": "Translate the {SOURCE_LANGUAGE} text to {TARGET_LANGUAGE}. Only return the translation.", "port": 1234}
             },
             "dark_mode": False,
             "result_font": "Arial",
@@ -412,6 +413,14 @@ class SettingsManager:
                     for key in self.default_settings:
                         if key not in self.settings:
                             self.settings[key] = self.default_settings[key]
+                        elif key == "api_providers":
+                            for p_name, p_conf in self.default_settings[key].items():
+                                if p_name not in self.settings[key]:
+                                    self.settings[key][p_name] = p_conf
+                                else:
+                                    for sub_key, sub_val in p_conf.items():
+                                        if sub_key not in self.settings[key][p_name]:
+                                            self.settings[key][p_name][sub_key] = sub_val
             return self.settings
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -551,7 +560,7 @@ class SettingsWindow(QWidget):
         lyt = QHBoxLayout(self.tab_translators)
         
         self.provider_list = QListWidget()
-        self.providers = ["google", "groq", "openai", "openrouter", "togetherai", "xai"]
+        self.providers = ["google", "groq", "openai", "openrouter", "togetherai", "xai", "nvidia", "lmstudio"]
         self.provider_list.setMinimumWidth(120)
         self.provider_list.setMaximumWidth(150)
         
@@ -595,10 +604,19 @@ class SettingsWindow(QWidget):
         self.btn_link_models.setFixedWidth(75)
         self.btn_link_models.clicked.connect(self.on_link_models_clicked)
         
+        self.provider_port = QSpinBox()
+        self.provider_port.setRange(1, 65535)
+        self.provider_port.setButtonSymbols(QSpinBox.NoButtons)
+        self.provider_port.setValue(1234)
+        self.provider_port.setToolTip("LM Studio local port")
+        self.provider_port.setFixedWidth(75)
+        self.provider_port.setVisible(False)
+        
         model_lyt = QHBoxLayout()
         model_lyt.setContentsMargins(0, 0, 0, 0)
         model_lyt.addWidget(self.provider_model)
         model_lyt.addWidget(self.btn_link_models)
+        model_lyt.addWidget(self.provider_port)
         
         self.provider_temp = QDoubleSpinBox()
         self.provider_temp.setRange(0.0, 2.0)
@@ -638,7 +656,8 @@ class SettingsWindow(QWidget):
             "openai": "https://developers.openai.com/api/docs/pricing",
             "openrouter": "https://openrouter.ai/models",
             "togetherai": "https://api.together.ai/models",
-            "xai": "https://console.x.ai/"
+            "xai": "https://console.x.ai/",
+            "nvidia": "https://build.nvidia.com/models"
         }
         url = links.get(provider_name)
         if url:
@@ -656,6 +675,10 @@ class SettingsWindow(QWidget):
             curr_name = current.text()
             self.load_provider_to_ui(curr_name)
             self.current_provider_editing = curr_name
+
+            is_lm = (curr_name == "lmstudio")
+            self.provider_port.setVisible(is_lm)
+            self.btn_link_models.setVisible(not is_lm)
             
     def on_provider_checked(self, item):
         if item.checkState() == Qt.Checked:
@@ -700,12 +723,16 @@ class SettingsWindow(QWidget):
 
         current_model = self.provider_model.currentText().strip()
         
-        if provider_name in api_providers:
-            api_providers[provider_name]["prompt"] = self.provider_prompt.toPlainText()
-            api_providers[provider_name]["api_key"] = real_key
-            api_providers[provider_name]["model"] = current_model
-            api_providers[provider_name]["temperature"] = self.provider_temp.value()
-            api_providers[provider_name]["max_tokens"] = self.provider_tokens.value()
+        if provider_name not in api_providers:
+            api_providers[provider_name] = {}
+            
+        api_providers[provider_name]["prompt"] = self.provider_prompt.toPlainText()
+        api_providers[provider_name]["api_key"] = real_key
+        api_providers[provider_name]["model"] = current_model
+        api_providers[provider_name]["temperature"] = self.provider_temp.value()
+        api_providers[provider_name]["max_tokens"] = self.provider_tokens.value()
+        if provider_name == "lmstudio":
+            api_providers[provider_name]["port"] = self.provider_port.value()
         self.settings.set("api_providers", api_providers)
         
         if real_key:
@@ -748,6 +775,8 @@ class SettingsWindow(QWidget):
                 
             self.provider_temp.setValue(p_conf.get("temperature", 0.5))
             self.provider_tokens.setValue(p_conf.get("max_tokens", 2000))
+            if provider_name == "lmstudio":
+                self.provider_port.setValue(p_conf.get("port", 1234))
         else:
             self.provider_prompt.clear()
             self.provider_api_key.setCurrentIndex(-1)
@@ -1446,7 +1475,9 @@ class TranslationThread(QThread):
                     "openai": "https://api.openai.com/v1/chat/completions",
                     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
                     "togetherai": "https://api.together.xyz/v1/chat/completions",
-                    "xai": "https://api.x.ai/v1/chat/completions"
+                    "xai": "https://api.x.ai/v1/chat/completions",
+                    "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
+                    "lmstudio": f"http://localhost:{providers_config.get('port', 1234)}/v1/chat/completions"
                 }
                 url = urls.get(active_provider)
                 payload = {
